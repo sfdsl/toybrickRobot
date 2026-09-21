@@ -37,6 +37,9 @@ class MapViewer(Node):
         super().__init__("map_viewer")
         self.view_range = view_range
         self.map_msg = None
+        # 最近一次 render() 的视窗参数 (x0, y1, 像素/米, size)，供"画面像素→世界坐标"反算
+        # （手机网页点选目标用；详见 phone_teleop.py 的 /goal 接口）
+        self.last_view = None
         self.buf = Buffer()
         self.listener = TransformListener(self.buf, self)
         qos = QoSProfile(
@@ -61,9 +64,17 @@ class MapViewer(Node):
         yaw = math.atan2(2.0 * (q.w * q.z), 1.0 - 2.0 * (q.z * q.z))
         return tr.x, tr.y, yaw
 
-    def render(self, size=720):
+    def render(self, size=720, view_range=None, center=None, offset=None):
+        """渲染一帧
+
+        view_range : 视野米数（默认 self.view_range）——网页缩放就是改它
+        center     : 视窗中心的世界坐标 (x, y)；不给则跟随车辆（无 TF 时用地图中心）
+        offset     : 在基准中心上再叠加 (dx, dy)（手机平移用；车动时视野仍跟着车）
+        """
+        view_range = self.view_range if view_range is None else float(view_range)
         msg = self.map_msg
         if msg is None:
+            self.last_view = None
             img = np.full((size, size, 3), 30, np.uint8)
             cv2.putText(img, "waiting /map ...", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
@@ -76,15 +87,21 @@ class MapViewer(Node):
 
         # 视窗（世界坐标，米）
         pose = self.robot_pose()
-        half = self.view_range / 2.0
-        if pose is not None:
+        half = view_range / 2.0
+        if center is not None:
+            cx_w, cy_w = center
+        elif pose is not None:
             cx_w, cy_w = pose[0], pose[1]
         else:
             cx_w = ox + w * res / 2.0
             cy_w = oy + h * res / 2.0
+        if offset is not None:              # 手机平移：在基准中心上叠加（车动时视野仍跟着车）
+            cx_w += float(offset[0])
+            cy_w += float(offset[1])
         x0, y0 = cx_w - half, cy_w - half
         x1, y1 = cx_w + half, cy_w + half
-        s = size / self.view_range          # 像素 / 米
+        s = size / view_range               # 像素 / 米（必须用本次的视野，缩放才对）
+        self.last_view = (x0, y1, s, size)  # 供画面像素 → 世界坐标反算（手机点选目标用）
 
         canvas = np.full((size, size, 3), 30, np.uint8)
 
@@ -130,7 +147,7 @@ class MapViewer(Node):
 
         # HUD
         cv2.putText(canvas, "range %.1fm | res %.3f | %dx%d"
-                    % (self.view_range, res, w, h),
+                    % (view_range, res, w, h),
                     (10, 24), cv2.FONT_HERSHEY_SIMPLEX,
                     0.55, (200, 200, 200), 1)
         if pose is None:

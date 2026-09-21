@@ -139,6 +139,35 @@ index 40f2793..5550e9a 100644
  ament_export_targets(SlamToolboxPlugin HAS_LIBRARY_TARGET)
 +endif()
  ament_package()
+diff --git a/config/mapper_params_localization.yaml b/config/mapper_params_localization.yaml
+index 22b9c99..918d59f 100644
+--- a/config/mapper_params_localization.yaml
++++ b/config/mapper_params_localization.yaml
+@@ -10,18 +10,18 @@ slam_toolbox:
+     # ROS Parameters
+     odom_frame: odom
+     map_frame: map
+-    base_frame: base_footprint
++    base_frame: base_link            # 本机无 base_footprint（同 04 方案适配）
+     scan_topic: /scan
+-    mode: mapping #localization
++    mode: localization               # 定位模式（导航用）；建图时改回 mapping
+ 
+-    # if you'd like to start localizing on bringup in a map and pose
+-    #map_file_name: test_steve
+-    #map_start_pose: [5.0, 1.0, 0.0]
++    # 载入已保存的建图序列做定位（2026-09-21 N1 适配）
++    map_file_name: /home/toybrick/RobotCode/04_map/robot_map
++    map_start_pose: [0.0, 0.0, 0.0]  # 车要放在【建图起点】附近；不在起点就按实际改
+ 
+     debug_logging: false
+     throttle_scans: 1
+     transform_publish_period: 0.02 #if 0 never publishes odometry
+-    map_update_interval: 5.0
++    map_update_interval: 1.0
+     resolution: 0.05
+     max_laser_range: 20.0 #for rastering images
+     minimum_time_interval: 0.5
 diff --git a/config/mapper_params_online_async.yaml b/config/mapper_params_online_async.yaml
 index 7520536..b6b2bfc 100644
 --- a/config/mapper_params_online_async.yaml

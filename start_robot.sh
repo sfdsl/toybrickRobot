@@ -1,30 +1,52 @@
 #!/usr/bin/env bash
 # ============================================================
-# 一键启动：底盘 + 雷达 + SLAM 建图 + 手机遥控（网页，含「保存地图」按钮）
+# 一键启动（launch 版）：**预检查 + 急停** 归脚本，真正的启动/停止交给 ROS 2 launch
 #
-#   ~/RobotCode/start_robot.sh             启动全套；Ctrl-C 一键停止
-#   ~/RobotCode/start_robot.sh --dry-run   只做预检查，不启动
-#   ~/RobotCode/start_robot.sh --stop      停掉全套（先发零速度，再按序退出）
+#   ~/RobotCode/start_robot.sh                     建图模式启动（默认）
+#   ~/RobotCode/start_robot.sh --mode localization 定位模式启动（导航用）
+#   ~/RobotCode/start_robot.sh --nav               同时起导航监听（手机点地图即出发；可连续点）
+#   ~/RobotCode/start_robot.sh --dry-run           只做预检查，不启动
+#   ~/RobotCode/start_robot.sh --stop              急停（先发零速度，再收掉所有节点）
 #
-# 启动完成后终端会打印手机要打开的地址：http://<小车IP>:8080/
-# 地图保存到 ~/RobotCode/04_map/（文件名自动带时间戳，手机页面点「保存地图」即可）
+# 启动内容与参数见 bringup launch：
+#   ros2 launch robot_bringup bringup.launch.py --show-args
+# 停止：在启动终端按 Ctrl-C —— launch 会把所有子进程一起优雅收掉
+#       （底盘节点发 AT+MT_STOP、手机遥控发零速度），比逐个 pkill 干净
 #
-# 别名：robot（启动） / robotstop（停止）——见 ~/.bash_aliases
+# 别名：robot / robotnav / robotcheck / robotstop（见 ~/.bash_aliases）
 # ============================================================
 set -u
 
-WS="$HOME/RobotCode/ros2_ws"
-SLAM_DIR="$HOME/RobotCode/01_Project/03_SLAM"
-LOG_DIR="$HOME/RobotCode/logs/run_$(date +%m%d_%H%M%S)"
 SETUP="/opt/ros2-foxy/install/setup.bash"
-PORT=8080
-
-NAMES=(底盘 雷达 SLAM 手机遥控)
-PIDS=()
+WS="$HOME/RobotCode/ros2_ws"
+MODE="mapping"
 
 say()  { printf '%s\n' "$*"; }
 fail() { printf '✗ %s\n' "$*" >&2; }
 ok()   { printf '✓ %s\n' "$*"; }
+
+# ---------------- 急停（launch 之外的兜底手段）----------------
+stop_all() {
+    if [ -f "$SETUP" ]; then
+        set +u                       # 同上：ROS setup.bash 在 set -u 下会报 unbound variable
+        source "$SETUP" 2>/dev/null
+        set -u
+    fi
+    say "先发零速度（保险）..."
+    timeout 1 ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1
+    say "按序退出：手机遥控 → SLAM → 雷达 → 底盘 ..."
+    pkill -INT -f 'phone_teleop.py'          2>/dev/null; sleep 0.5
+    pkill -INT -f 'slam_toolbox'             2>/dev/null; sleep 0.5
+    pkill -INT -f 'ldlidar'                  2>/dev/null; sleep 0.5
+    pkill -INT -f 'chassis_node'             2>/dev/null; sleep 1.5
+    for pat in 'phone_teleop.py' 'slam_toolbox' 'ldlidar' 'chassis_node'; do
+        if pgrep -f "$pat" >/dev/null; then
+            say "强制结束残留：$pat"
+            pkill -9 -f "$pat" 2>/dev/null
+        fi
+    done
+    say "已全部停止。"
+}
 
 # ---------------- 预检查 ----------------
 precheck() {
@@ -34,136 +56,66 @@ precheck() {
     done
     [ -f "$SETUP" ] || { fail "找不到 $SETUP"; bad=1; }
     [ -d "$WS/install" ] || { fail "找不到工作空间 $WS/install"; bad=1; }
-    [ -f "$SLAM_DIR/phone_teleop.py" ] || { fail "找不到 $SLAM_DIR/phone_teleop.py"; bad=1; }
 
     local running=""
-    pgrep -f 'chassis_node'            >/dev/null && running="$running 底盘节点"
-    pgrep -f 'ldlidar --ros-args'      >/dev/null && running="$running 雷达"
-    pgrep -f 'async_slam_toolbox_node' >/dev/null && running="$running SLAM"
-    pgrep -f 'phone_teleop.py'         >/dev/null && running="$running 手机遥控"
+    pgrep -f 'chassis_node'     >/dev/null && running="$running 底盘"
+    pgrep -f 'ldlidar'          >/dev/null && running="$running 雷达"
+    pgrep -f 'slam_toolbox'     >/dev/null && running="$running SLAM"
+    pgrep -f 'phone_teleop.py'  >/dev/null && running="$running 手机遥控"
     if [ -n "$running" ]; then
         fail "检测到已有实例在运行：$running"
-        say  "        先执行： $0 --stop   （或直接 Ctrl-C 掉旧终端）"
+        say  "        先执行： $0 --stop   （或到启动终端按 Ctrl-C）"
         bad=1
     fi
     return $bad
 }
 
-# ---------------- 启动 ----------------
-start_all() {
-    mkdir -p "$LOG_DIR" "$HOME/RobotCode/04_map"
-
-    # shellcheck disable=SC1090
-    source "$SETUP"
-    source "$WS/install/setup.bash"
-
-    say "日志目录：$LOG_DIR"
-    say "启动中 ...（底盘 → 雷达 → SLAM → 手机遥控，各等 2 秒）"
-
-    ros2 run base_driver chassis_node                    >"$LOG_DIR/chassis.log" 2>&1 &
-    PIDS+=($!); sleep 2
-    ros2 launch ldlidar ld14p.launch.py                  >"$LOG_DIR/lidar.log"   2>&1 &
-    PIDS+=($!); sleep 2
-    ros2 launch slam_toolbox online_async_launch.py      >"$LOG_DIR/slam.log"    2>&1 &
-    PIDS+=($!); sleep 2
-    python3 "$SLAM_DIR/phone_teleop.py" -p "$PORT"       >"$LOG_DIR/phone.log"   2>&1 &
-    PIDS+=($!); sleep 2
-
-    # ---- 状态检查 ----
-    local ip; ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-    say ""
-    say "========================================================"
-    local i alive=0
-    for i in "${!PIDS[@]}"; do
-        if kill -0 "${PIDS[$i]}" 2>/dev/null; then
-            ok "${NAMES[$i]} 已启动（pid ${PIDS[$i]}）"
-            alive=$((alive + 1))
-        else
-            fail "${NAMES[$i]} 启动后立即退出 —— 日志尾部："
-            tail -n 6 "$LOG_DIR/"*.log 2>/dev/null | tail -n 8 >&2
-        fi
-    done
-    say "--------------------------------------------------------"
-    say " 手机浏览器打开： http://${ip:-<小车IP>}:${PORT}/"
-    say " 手机页面：虚拟摇杆遥控 + 实时地图 + 「保存地图」按钮"
-    say " 地图保存目录： ~/RobotCode/04_map/  （文件名自动带时间戳）"
-    say " 日志：$LOG_DIR"
-    say " Ctrl-C 停止全套（先停车再按序退出）"
-    say "========================================================"
-    [ "$alive" -eq 0 ] && { fail "没有任何进程存活，检查日志后重试"; return 1; }
-    return 0
-}
-
-# ---------------- 停止 ----------------
-stop_all() {
-    # shellcheck disable=SC1090
-    [ -f "$SETUP" ] && source "$SETUP" 2>/dev/null
-    say "先发零速度（保险）..."
-    timeout 1 ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1
-
-    # 用 SIGINT（等同 Ctrl-C）：各节点会走自己的退出流程（底盘发 AT+MT_STOP、手机发零速度）
-    say "按序退出：手机遥控 → SLAM → 雷达 → 底盘 ..."
-    pkill -INT -f 'phone_teleop.py'                2>/dev/null; sleep 0.5
-    pkill -INT -f 'async_slam_toolbox_node'        2>/dev/null
-    pkill -INT -f 'ros2 launch slam_toolbox'       2>/dev/null; sleep 0.5
-    pkill -INT -f 'ldlidar'                        2>/dev/null
-    pkill -INT -f 'ros2 launch ldlidar'            2>/dev/null; sleep 0.5
-    pkill -INT -f 'chassis_node'                   2>/dev/null; sleep 1.5
-
-    # 兜底：还活着的强制结束
-    for pat in 'phone_teleop.py' 'async_slam_toolbox_node' 'ldlidar' 'chassis_node'; do
-        if pgrep -f "$pat" >/dev/null; then
-            say "强制结束残留：$pat"
-            pkill -9 -f "$pat" 2>/dev/null
-        fi
-    done
-    say "已全部停止。"
-}
-
-# ---------------- 看门狗：子进程掉线时提醒 ----------------
-monitor() {
-    while true; do
-        sleep 5
-        local i alive=0
-        for i in "${!PIDS[@]}"; do
-            if kill -0 "${PIDS[$i]}" 2>/dev/null; then
-                alive=$((alive + 1))
-            elif [ -n "${PIDS[$i]}" ]; then
-                fail "${NAMES[$i]} 进程退出了（pid ${PIDS[$i]}）——日志：$LOG_DIR"
-                tail -n 5 "$LOG_DIR"/*.log 2>/dev/null | tail -n 6 >&2
-                PIDS[$i]=""
-            fi
-        done
-        [ "$alive" -eq 0 ] && { say "所有子进程已退出，脚本结束。"; exit 0; }
-    done
-}
-
 # ---------------- main ----------------
-case "${1:-}" in
-    --dry-run)
-        say "预检查（--dry-run，不启动任何进程）..."
-        if precheck; then ok "预检查通过，可以启动： $0"; else fail "预检查未通过"; exit 1; fi
-        exit 0
-        ;;
-    --stop)
-        stop_all
-        exit 0
-        ;;
-    "" ) ;;
-    * ) fail "未知参数：$1（可用：--dry-run / --stop）"; exit 2 ;;
+MODE="mapping"
+DRY=0
+NAV=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --stop)     stop_all; exit 0 ;;
+        --mode)     MODE="${2:-mapping}"; shift 2 ;;
+        --nav)      NAV=1; shift ;;
+        --dry-run)  DRY=1; shift ;;
+        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --dry-run / --stop）"; exit 2 ;;
+    esac
+done
+case "$MODE" in
+    mapping|localization) ;;
+    *) fail "mode 只能是 mapping 或 localization（收到：$MODE）"; exit 2 ;;
 esac
 
-say "=== 预检查 ==="
+say "=== 预检查（mode=$MODE）==="
 precheck || { fail "预检查未通过，未启动。"; exit 1; }
 ok "预检查通过"
 
-cleanup() {
-    say ""
-    say "收到退出信号，正在停止全套 ..."
-    stop_all
+if [ "$DRY" = "1" ]; then
+    say "（--dry-run：只做预检查，不启动；真正启动去掉 --dry-run 即可）"
     exit 0
-}
-trap cleanup INT TERM
+fi
 
-start_all || exit 1
-monitor
+# ---------------- 交给 launch ----------------
+# shellcheck disable=SC1090
+# ROS 的 setup.bash 模板里有 `${COLCON_TRACE}` 的裸引用（未定义就报错），
+# 在 set -u（nounset）下会报 "unbound variable" 并让脚本直接退出 → source 期间临时关掉
+set +u
+source "$SETUP"
+source "$WS/install/setup.bash"
+set -u
+
+if ! ros2 pkg prefix robot_bringup >/dev/null 2>&1; then
+    fail "找不到 robot_bringup 包 —— 先构建："
+    say  "        cd $WS && colcon build --packages-select robot_bringup && source install/setup.bash"
+    exit 1
+fi
+
+if [ "$NAV" = "1" ]; then
+    [ "$MODE" = "localization" ] || say "提示：--nav 通常与 --mode localization 一起用（当前 mode=$MODE）"
+    say "启动中 ...（含导航监听：手机点地图即出发、可连续点；Ctrl-C 停止全部）"
+    exec ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav:=true
+fi
+say "启动中 ...（Ctrl-C 停止全部）"
+exec ros2 launch robot_bringup bringup.launch.py mode:="$MODE"

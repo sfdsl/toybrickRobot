@@ -1,0 +1,295 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 40f2793..5550e9a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -25,13 +25,33 @@ find_package(std_msgs REQUIRED)
+ find_package(std_srvs REQUIRED)
+ find_package(builtin_interfaces REQUIRED)
+ find_package(rosidl_default_generators REQUIRED)
+-find_package(nav2_map_server REQUIRED)
+-find_package(rviz_common REQUIRED)
+-find_package(rviz_default_plugins REQUIRED)
+-find_package(rviz_ogre_vendor REQUIRED)
+-find_package(rviz_rendering REQUIRED)
+ find_package(interactive_markers REQUIRED)
+-find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Test Concurrent)
++
++# ---- 可选依赖（RK3588/Toybrick 上的 ROS2 Foxy 为源码安装，以下包默认不具备）----
++# 1) nav2_map_server：本仓库只在 src/map_saver.cpp 里用 system("ros2 run nav2_map_server
++#    map_saver_cli ...") 做运行时调用，编译期没有任何头文件/库依赖，故不强制查找。
++#    （本机保存地图用自带的 map_saver.py，见 04_SLAM建图实验方案.md S6）
++# 2) rviz_* + Qt5：仅 RViz 插件 SlamToolboxPlugin 需要。本机 rviz2 因 Mali GPU 无 GLX
++#    无法运行，且未安装 Qt5 开发包，故改为可选：找到才编译插件，否则跳过。
++#    核心 SLAM 节点（async/sync/localization/lifelong + merge_maps_kinematic）不受影响。
++find_package(nav2_map_server QUIET)
++find_package(Qt5 QUIET COMPONENTS Core Gui Widgets Test Concurrent)
++
++set(SLAM_TOOLBOX_BUILD_RVIZ_PLUGIN OFF)
++if(Qt5_FOUND)
++  find_package(rviz_common QUIET)
++  find_package(rviz_default_plugins QUIET)
++  find_package(rviz_ogre_vendor QUIET)
++  find_package(rviz_rendering QUIET)
++  if(rviz_common_FOUND AND rviz_default_plugins_FOUND AND rviz_ogre_vendor_FOUND AND rviz_rendering_FOUND)
++    set(SLAM_TOOLBOX_BUILD_RVIZ_PLUGIN ON)
++  endif()
++endif()
++if(SLAM_TOOLBOX_BUILD_RVIZ_PLUGIN)
++  message(STATUS "slam_toolbox: RViz 插件 启用 (Qt5 + rviz 均已找到)")
++else()
++  message(STATUS "slam_toolbox: RViz 插件 跳过 (未找到 Qt5/rviz) - 核心 SLAM 节点不受影响")
++endif()
+ 
+ #karto_sdk lib
+ set(BUILD_SHARED_LIBS ON)
+@@ -39,6 +59,9 @@ add_subdirectory(lib/karto_sdk)
+ 
+ set(CMAKE_INCLUDE_CURRENT_DIR ON)
+ 
++# 注意：nav2_map_server / rviz_* / Qt5 不能放进本列表——它们在 ament_target_dependencies()
++# 中一旦缺失会直接 FATAL_ERROR（见 CMake 报错 "package name xxx was not found before"），
++# 而它们只在可选场景下用到，故统一在各自的可选块里单独指定。
+ set(dependencies
+   rclcpp
+   message_filters
+@@ -48,23 +71,16 @@ set(dependencies
+   tf2_ros
+   visualization_msgs
+   pluginlib
+-  nav2_map_server
+   tf2_geometry_msgs
+   tf2_sensor_msgs
+   std_msgs
+   std_srvs
+   builtin_interfaces
+-  rviz_common
+-  rviz_default_plugins
+-  rviz_ogre_vendor
+-  rviz_rendering
+   interactive_markers
+-  Qt5
+ )
+ 
+ set(libraries
+     toolbox_common
+-    SlamToolboxPlugin
+     ceres_solver_plugin
+     async_slam_toolbox
+     sync_slam_toolbox
+@@ -75,7 +91,7 @@ set(libraries
+ find_package(PkgConfig REQUIRED)
+ find_package(Eigen3 REQUIRED)
+ find_package(CSparse REQUIRED)
+-find_package(G2O REQUIRED)
++find_package(G2O QUIET)  # upstream uses REQUIRED, but g2o is unused in this repo
+ find_package(Cholmod REQUIRED)
+ find_package(LAPACK REQUIRED)
+ find_package(Ceres REQUIRED COMPONENTS SuiteSparse)
+@@ -107,13 +123,20 @@ rosidl_generate_interfaces(${PROJECT_NAME}
+   DEPENDENCIES builtin_interfaces geometry_msgs std_msgs nav_msgs visualization_msgs
+ )
+ 
+-#### rviz Plugin
++#### rviz Plugin（可选：需 Qt5 + rviz_*，缺失则整块跳过）
++if(SLAM_TOOLBOX_BUILD_RVIZ_PLUGIN)
++list(APPEND libraries SlamToolboxPlugin)
+ qt5_wrap_cpp(MOC_FILES rviz_plugin/slam_toolbox_rviz_plugin.hpp)
+ add_library(SlamToolboxPlugin SHARED
+   rviz_plugin/slam_toolbox_rviz_plugin.cpp
+   ${MOC_FILES})
+ ament_target_dependencies(SlamToolboxPlugin
+  ${dependencies}
++ rviz_common
++ rviz_default_plugins
++ rviz_ogre_vendor
++ rviz_rendering
++ Qt5
+ )
+ target_include_directories(SlamToolboxPlugin PUBLIC
+   ${Qt5Widgets_INCLUDE_DIRS}
+@@ -124,6 +147,7 @@ rosidl_target_interfaces(SlamToolboxPlugin ${PROJECT_NAME} "rosidl_typesupport_c
+ target_compile_definitions(SlamToolboxPlugin PUBLIC "PLUGINLIB__DISABLE_BOOST_FUNCTIONS")
+ target_compile_definitions(SlamToolboxPlugin PRIVATE "RVIZ_DEFAULT_PLUGINS_BUILDING_LIBRARY")
+ pluginlib_export_plugin_description_file(rviz_common rviz_plugins.xml) 
++endif()
+ 
+ #### Ceres Plugin
+ add_library(ceres_solver_plugin solvers/ceres_solver.cpp)
+@@ -191,6 +215,7 @@ install(TARGETS async_slam_toolbox_node
+   RUNTIME DESTINATION lib/${PROJECT_NAME}
+ )
+ 
++if(SLAM_TOOLBOX_BUILD_RVIZ_PLUGIN)
+ install(TARGETS SlamToolboxPlugin
+   EXPORT SlamToolboxPlugin
+   ARCHIVE DESTINATION lib
+@@ -198,6 +223,7 @@ install(TARGETS SlamToolboxPlugin
+   RUNTIME DESTINATION bin
+   INCLUDES DESTINATION include
+ )
++endif()
+ 
+ install(DIRECTORY include/
+   DESTINATION include
+@@ -218,5 +244,7 @@ install(FILES solver_plugins.xml rviz_plugins.xml
+ ament_export_include_directories(include)
+ ament_export_libraries(${libraries})
+ ament_export_dependencies(${dependencies})
++if(SLAM_TOOLBOX_BUILD_RVIZ_PLUGIN)
+ ament_export_targets(SlamToolboxPlugin HAS_LIBRARY_TARGET)
++endif()
+ ament_package()
+diff --git a/config/mapper_params_online_async.yaml b/config/mapper_params_online_async.yaml
+index 7520536..b6b2bfc 100644
+--- a/config/mapper_params_online_async.yaml
++++ b/config/mapper_params_online_async.yaml
+@@ -12,7 +12,7 @@ slam_toolbox:
+     # ROS Parameters
+     odom_frame: odom
+     map_frame: map
+-    base_frame: base_footprint
++    base_frame: base_link  # 本机 TF 链为 odom→base_link→base_laser，无 base_footprint（2026-09-20 定制）
+     scan_topic: /scan
+     mode: mapping #localization
+ 
+@@ -26,7 +26,7 @@ slam_toolbox:
+     debug_logging: false
+     throttle_scans: 1
+     transform_publish_period: 0.02 #if 0 never publishes odometry
+-    map_update_interval: 5.0
++    map_update_interval: 1.0  # /map 发布周期（秒），5.0 → 0.2Hz 太慢；1.0 = 1Hz（2026-09-20 调整）
+     resolution: 0.05
+     max_laser_range: 20.0 #for rastering images
+     minimum_time_interval: 0.5
+diff --git a/launch/online_async_launch.py b/launch/online_async_launch.py
+index 9965ca8..0197b49 100644
+--- a/launch/online_async_launch.py
++++ b/launch/online_async_launch.py
+@@ -1,12 +1,10 @@
+ import os
+ 
+ from launch import LaunchDescription
+-from launch.actions import DeclareLaunchArgument, LogInfo
+-from launch.conditions import UnlessCondition
+-from launch.substitutions import LaunchConfiguration, PythonExpression
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
+ from launch_ros.actions import Node
+ from ament_index_python.packages import get_package_share_directory
+-from nav2_common.launch import HasNodeParams
+ 
+ 
+ def generate_launch_description():
+@@ -17,31 +15,21 @@ def generate_launch_description():
+ 
+     declare_use_sim_time_argument = DeclareLaunchArgument(
+         'use_sim_time',
+-        default_value='true',
++        default_value='false',
+         description='Use simulation/Gazebo clock')
+     declare_params_file_cmd = DeclareLaunchArgument(
+         'params_file',
+         default_value=default_params_file,
+         description='Full path to the ROS2 parameters file to use for the slam_toolbox node')
+ 
+-    # If the provided param file doesn't have slam_toolbox params, we must pass the
+-    # default_params_file instead. This could happen due to automatic propagation of
+-    # LaunchArguments. See:
+-    # https://github.com/ros-planning/navigation2/pull/2243#issuecomment-800479866
+-    has_node_params = HasNodeParams(source_file=params_file,
+-                                    node_name='slam_toolbox')
+-
+-    actual_params_file = PythonExpression(['"', params_file, '" if ', has_node_params,
+-                                           ' else "', default_params_file, '"'])
+-
+-    log_param_change = LogInfo(msg=['provided params_file ',  params_file,
+-                                    ' does not contain slam_toolbox parameters. Using default: ',
+-                                    default_params_file],
+-                               condition=UnlessCondition(has_node_params))
+-
++    # —— 本机定制（2026-09-20，RK3588/Toybrick 版 ROS2 环境适配）——
++    # 1) 原版用 nav2_common.launch.HasNodeParams 做"参数文件回退"检查，
++    #    本机 ROS2 打包无 nav2_common，故简化为直接使用 params_file
++    #    （默认值即本包自带配置，不存在回退需求）。
++    # 2) use_sim_time 默认由 true 改为 false（真机，无仿真时钟）。
+     start_async_slam_toolbox_node = Node(
+         parameters=[
+-          actual_params_file,
++          params_file,
+           {'use_sim_time': use_sim_time}
+         ],
+         package='slam_toolbox',
+@@ -53,7 +41,6 @@ def generate_launch_description():
+ 
+     ld.add_action(declare_use_sim_time_argument)
+     ld.add_action(declare_params_file_cmd)
+-    ld.add_action(log_param_change)
+     ld.add_action(start_async_slam_toolbox_node)
+ 
+     return ld
+diff --git a/launch/online_sync_launch.py b/launch/online_sync_launch.py
+index 74ad50e..fff8abf 100644
+--- a/launch/online_sync_launch.py
++++ b/launch/online_sync_launch.py
+@@ -1,12 +1,10 @@
+ import os
+ 
+ from launch import LaunchDescription
+-from launch.actions import DeclareLaunchArgument, LogInfo
+-from launch.conditions import UnlessCondition
+-from launch.substitutions import LaunchConfiguration, PythonExpression
++from launch.actions import DeclareLaunchArgument
++from launch.substitutions import LaunchConfiguration
+ from launch_ros.actions import Node
+ from ament_index_python.packages import get_package_share_directory
+-from nav2_common.launch import HasNodeParams
+ 
+ 
+ def generate_launch_description():
+@@ -17,31 +15,21 @@ def generate_launch_description():
+ 
+     declare_use_sim_time_argument = DeclareLaunchArgument(
+         'use_sim_time',
+-        default_value='true',
++        default_value='false',
+         description='Use simulation/Gazebo clock')
+     declare_params_file_cmd = DeclareLaunchArgument(
+         'params_file',
+         default_value=default_params_file,
+         description='Full path to the ROS2 parameters file to use for the slam_toolbox node')
+ 
+-    # If the provided param file doesn't have slam_toolbox params, we must pass the
+-    # default_params_file instead. This could happen due to automatic propagation of
+-    # LaunchArguments. See:
+-    # https://github.com/ros-planning/navigation2/pull/2243#issuecomment-800479866
+-    has_node_params = HasNodeParams(source_file=params_file,
+-                                    node_name='slam_toolbox')
+-
+-    actual_params_file = PythonExpression(['"', params_file, '" if ', has_node_params,
+-                                           ' else "', default_params_file, '"'])
+-
+-    log_param_change = LogInfo(msg=['provided params_file ',  params_file,
+-                                    ' does not contain slam_toolbox parameters. Using default: ',
+-                                    default_params_file],
+-                               condition=UnlessCondition(has_node_params))
+-
++    # —— 本机定制（2026-09-20，RK3588/Toybrick 版 ROS2 环境适配）——
++    # 1) 原版用 nav2_common.launch.HasNodeParams 做"参数文件回退"检查，
++    #    本机 ROS2 打包无 nav2_common，故简化为直接使用 params_file
++    #    （默认值即本包自带配置，不存在回退需求）。
++    # 2) use_sim_time 默认由 true 改为 false（真机，无仿真时钟）。
+     start_sync_slam_toolbox_node = Node(
+         parameters=[
+-          actual_params_file,
++          params_file,
+           {'use_sim_time': use_sim_time}
+         ],
+         package='slam_toolbox',
+@@ -53,7 +41,6 @@ def generate_launch_description():
+ 
+     ld.add_action(declare_use_sim_time_argument)
+     ld.add_action(declare_params_file_cmd)
+-    ld.add_action(log_param_change)
+     ld.add_action(start_sync_slam_toolbox_node)
+ 
+     return ld

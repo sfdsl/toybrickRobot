@@ -1,0 +1,38 @@
+# udev 规则 - 机器人串口设备别名
+# 整合乐动 LD-14P 官方规则 + 底盘驱动板规则
+# 部署到: /etc/udev/rules.d/99-robot.rules
+#
+# 部署方法:
+#   sudo cp 99-robot.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# 验证方法:
+#   ls -la /dev/LD14P /dev/CAR_BASE
+
+#============================================================
+# LD-14P 激光雷达
+# 在本机内核上 CH9102 被 cdc_acm 驱动接管，设备名为 ttyACM*，
+# 而非官方规则里的 ttyCH343USB*，故两条规则都保留。
+#============================================================
+
+# 版本1a: CH9102 芯片 (1a86:55d4) - 由 cdc_acm 驱动生成 ttyACM*
+KERNEL=="ttyACM*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", MODE:="0777", GROUP:="dialout", SYMLINK+="LD14P"
+
+# 版本1b: CH9102 芯片 (1a86:55d4) - 其他内核下可能识别为 ttyCH343USB*
+KERNEL=="ttyCH343USB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", MODE:="0777", GROUP:="dialout", SYMLINK+="LD14P"
+
+# 版本2: CP2102 芯片 (10c4:ea60, serial=0001)
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="0001", MODE:="0777", GROUP:="dialout", SYMLINK+="LD14P"
+
+#============================================================
+# 底盘驱动板 (USB转TTL)
+#============================================================
+
+# CH340 芯片 (1a86:7523)
+# 注: 本机加载的是自编译 ch341 驱动，设备名是 ttyCH341USB* 而不是 ttyUSB*
+KERNEL=="ttyCH341USB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", GROUP:="dialout", SYMLINK+="CAR_BASE"
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE:="0777", GROUP:="dialout", SYMLINK+="CAR_BASE"
+
+# CP2102 芯片 (10c4:ea60) - 排除雷达序列号0001
+KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}!="0001", MODE:="0777", GROUP:="dialout", SYMLINK+="CAR_BASE"

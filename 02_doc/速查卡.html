@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<title>小车操作速查卡</title>
+<style>
+  @page { size: A4; margin: 9mm; }
+  body { font-family: "Noto Sans CJK SC", "WenQuanYi Zen Hei", sans-serif; color:#111; margin:0; }
+  h1 { font-size: 16pt; margin:0 0 1mm 0; }
+  .sub { font-size: 8pt; color:#555; margin-bottom:2mm; }
+  table { width:100%; border-collapse:collapse; }
+  td { vertical-align:top; }
+  .col { width:50%; padding:0 2mm 0 0; }
+  .box { border:1pt solid #333; border-radius:1.5mm; padding:1.5mm 2mm; margin-bottom:2mm; }
+  .box h2 { font-size: 11pt; margin:0 0 1mm 0; color:#12459c; }
+  p, li { font-size: 9.5pt; line-height:1.32; margin:0.5mm 0; }
+  ul { margin:0; padding-left:4.5mm; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size:9pt;
+         background:#f0f0f0; padding:0 0.6mm; }
+  .warn { color:#b10000; font-weight:700; }
+  .foot { font-size:8pt; color:#555; border-top:0.8pt solid #999; margin-top:1.5mm; padding-top:1mm; }
+</style></head>
+<body>
+
+<h1>小车操作速查卡</h1>
+<div class="sub">RK3588 + LD14P + 麦轮底盘 ｜ 详细说明：<code>02_doc/09_使用说明.md</code> ｜ 2026-09-20</div>
+
+<table><tr>
+<td class="col">
+
+  <div class="box">
+    <h2>① 启动 / 停止（约 10 秒）</h2>
+    <p><code>robot</code>　一键启动（底盘 / 雷达 / SLAM / 遥控）</p>
+    <p><code>robotstop</code>　停止全套（或启动终端 <b>Ctrl-C</b>）</p>
+    <p><code>robotcheck</code>　只检查设备与是否已有实例</p>
+    <p>启动后打印手机地址：<b>http://&lt;小车IP&gt;:8080/</b>（<code>myip</code> 查 IP）</p>
+  </div>
+
+  <div class="box">
+    <h2>② 手机遥控（零 App）</h2>
+    <ul>
+      <li>手机连<b>同一个 WiFi</b> → 打开上面的地址</li>
+      <li>摇杆：<b>上=前进、左右=转向，松手即停</b>；旁边的滑条调速度上限</li>
+      <li>右上角按钮 <b>「保存地图」</b>（会先自动停车再存）</li>
+      <li>地图：白=空闲　黑=障碍　<b>灰=未扫到</b>；红色三角=车</li>
+    </ul>
+  </div>
+
+  <div class="box">
+    <h2>③ 建图要点</h2>
+    <ul>
+      <li>先原地转一圈：<code>drive spin</code>（或摇杆只推左右）</li>
+      <li>速度 <b>≤0.15 m/s</b>；<span class="warn">不要横移</span>（麦轮里程计不可信）</li>
+      <li>沿墙慢走、<b>绕回起点</b>（回环）；避开玻璃 / 镜面 / 纯黑物</li>
+      <li>自动走：<code>drive square -d 1.5</code> ｜ <code>drive grid -L 2 -W 0.8 -n 3</code></li>
+    </ul>
+  </div>
+
+</td>
+<td class="col">
+
+  <div class="box">
+    <h2>④ 保存地图</h2>
+    <p>手机点 <b>「保存地图」</b>，或终端 <code>savemap</code> → 存到</p>
+    <p><code>~/RobotCode/04_map/map_&lt;时间戳&gt;.*</code></p>
+    <p><code>.pgm</code> 看图 ｜ <code>.yaml</code> 导航 ｜ <code>.posegraph/.data</code> 续建</p>
+    <p>时间戳命名 → <b>每次存档都保留，不覆盖</b></p>
+  </div>
+
+  <div class="box">
+    <h2>⑤ 常用命令</h2>
+    <p><code>mapv</code> 地图 ｜ <code>scanview</code> 点云 ｜ <code>tfc</code> TF 树</p>
+    <p><code>odomhz</code> / <code>scanhz</code> 频率 ｜ <code>whocar</code> / <code>wholidar</code> 串口</p>
+    <p><code>drive -h</code> 自动行驶全部预设与参数</p>
+  </div>
+
+  <div class="box">
+    <h2>⑥ 排错三行</h2>
+    <ul>
+      <li>车不动 → <code>odomhz</code> 没数据？<code>whocar</code> 有占用？→ 重启底盘节点</li>
+      <li>地图不更新 → SLAM 在跑吗？<code>ros2 topic hz /map</code>（应 ≈1.0 Hz）</li>
+      <li>整个乱了 → <code>robotstop</code> → 等 2 秒 → <code>robot</code></li>
+    </ul>
+  </div>
+
+  <div class="box">
+    <h2>⑦ 安全</h2>
+    <ul>
+      <li><span class="warn">没有避障！</span>清空场地 + 留人看护 + 手边能按「停 止」</li>
+      <li>速度 ≤0.2 m/s；贴墙太近有盲区</li>
+      <li>网页只在本机局域网、无鉴权 → 用完 Ctrl-C 关掉</li>
+    </ul>
+  </div>
+
+</td>
+</tr></table>
+
+<div class="foot">
+  设备：<code>/dev/CAR_BASE</code>（底盘）　<code>/dev/LD14P</code>（雷达）　｜　日志：<code>~/RobotCode/logs/run_&lt;月日_时分&gt;/</code>　｜　详见 <code>09_使用说明.md</code>
+</div>
+
+</body></html>

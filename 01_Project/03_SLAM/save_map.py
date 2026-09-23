@@ -33,7 +33,7 @@ try:
 except ImportError as e:
     raise SystemExit(
         '导入 ROS 2 模块失败：%s\n提示：先 source 环境\n'
-        '  source /opt/ros2-foxy/install/setup.bash\n'
+        '  source /opt/ros/humble/setup.bash\n'
         '  source ~/RobotCode/ros2_ws/install/setup.bash' % e)
 
 DEFAULT_SAVE_DIR = os.path.expanduser('~/RobotCode/04_map')

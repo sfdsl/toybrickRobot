@@ -149,6 +149,26 @@ class ChassisNode(Node):
         self.declare_parameter('publish_tf', True)
         self.declare_parameter('dry_run', False)
         self.declare_parameter('debug_enc', False)
+        # P29 ω 死区补偿：实测 |ω|<0.15 rad/s 时 PWM（aw=100·ω/wz_max≈7.5）太小电机不响应。
+        #   死区内的"微动"指令抬到 wz_boost，让上层（nav2/MPPI/手动）不再被死区卡死。
+        self.declare_parameter('wz_deadband', 0.15)   # 死区宽度（实测，见 08 方案 §9.2 P9）
+        self.declare_parameter('wz_boost', 0.18)      # 补偿目标（死区上沿 + 余量）
+        # P32：ignore 0.03 → 0.015。P30 实测终点前"位置已到、朝向差 ~45°"的微调指令
+        #   ω=0.02~0.028 被 0.03 归零带误杀 → 冻结 24 s。0.015 以下才算收敛噪音；
+        #   0.018 boost 后 ~10°/s，5 s 内完成对准。
+        self.declare_parameter('wz_ignore', 0.015)    # ≤ 此值视为 0（收敛噪音，不放大）
+        # P30 v 死区补偿：实测 P29 后车在 v=0.022 处冻结 45s+——PWM=100·v/vx_max≈4.4%
+        #   低于电机启动阈值，轮子不转（0.05 档实测只有半速，更低全灭）。补上 v 侧。
+        self.declare_parameter('vx_deadband', 0.05)   # v 死区上沿（0.05 档尚能走，取其下）
+        self.declare_parameter('vx_boost', 0.07)      # 补偿目标（实走 ~0.035，够爬行脱困）
+        # P32：ignore 0.02 → 0.01。P30 实测 v=0.015~0.018 的爬行指令被归零 → 位置冻结
+        #   24 s。单周期 lurch ~9 mm，在 xy 容差 0.20 m 面前可忽略。
+        self.declare_parameter('vx_ignore', 0.01)     # ≤ 此值视为 0（停车精度保护）
+        # P31：vy 补偿对称补齐（麦轮驱动板支持横移，低 vy 同样落 PWM 死区）。
+        #   参数沿用 v 侧口径，**未单独标定**——横移场景少，出问题再调。
+        self.declare_parameter('vy_deadband', 0.05)
+        self.declare_parameter('vy_boost', 0.07)
+        self.declare_parameter('vy_ignore', 0.01)     # P32：与 v 侧对齐
 
         self.port = self.get_parameter('port').value
         self.baud = int(self.get_parameter('baudrate').value)
@@ -157,6 +177,15 @@ class ChassisNode(Node):
         self.vx_max = float(self.get_parameter('vx_max').value)
         self.vy_max = float(self.get_parameter('vy_max').value)
         self.wz_max = float(self.get_parameter('wz_max').value)
+        self.wz_deadband = float(self.get_parameter('wz_deadband').value)
+        self.wz_boost = float(self.get_parameter('wz_boost').value)
+        self.wz_ignore = float(self.get_parameter('wz_ignore').value)
+        self.vx_deadband = float(self.get_parameter('vx_deadband').value)
+        self.vx_boost = float(self.get_parameter('vx_boost').value)
+        self.vx_ignore = float(self.get_parameter('vx_ignore').value)
+        self.vy_deadband = float(self.get_parameter('vy_deadband').value)
+        self.vy_boost = float(self.get_parameter('vy_boost').value)
+        self.vy_ignore = float(self.get_parameter('vy_ignore').value)
         self.ticks_per_meter = float(self.get_parameter('ticks_per_meter').value)
         self.wheel_separation = float(self.get_parameter('wheel_separation').value)
         self.enc_left_sign = int(self.get_parameter('enc_left_sign').value)
@@ -210,7 +239,20 @@ class ChassisNode(Node):
     def on_cmd_vel(self, msg):
         self.last_cmd_time = time.time()
         self.cmd_active = True
-        self.send_pwm(self.twist_to_pwm(msg.linear.x, msg.linear.y, msg.angular.z))
+        # P29/P30 死区补偿（只动输出，/odom 反馈仍用编码器实测，不受影响）：
+        #   ω：0.03 < |ω| < 0.15 → 抬到 wz_boost；|ω| ≤ 0.03 → 0（到位微调防抖）
+        #   v：0.02 < |v| < 0.05 → 抬到 vx_boost；|v| ≤ 0.02 → 0（停车精度保护）
+        #   （P30 实测：v=0.022 → PWM 4.4% 轮子不转，冻结 45s+；磨蹭指令需变得可执行）
+        vx = msg.linear.x
+        if 0.0 < abs(vx) < self.vx_deadband:
+            vx = math.copysign(self.vx_boost, vx) if abs(vx) >= self.vx_ignore else 0.0
+        vy = msg.linear.y
+        if 0.0 < abs(vy) < self.vy_deadband:
+            vy = math.copysign(self.vy_boost, vy) if abs(vy) >= self.vy_ignore else 0.0
+        wz = msg.angular.z
+        if 0.0 < abs(wz) < self.wz_deadband:
+            wz = math.copysign(self.wz_boost, wz) if abs(wz) >= self.wz_ignore else 0.0
+        self.send_pwm(self.twist_to_pwm(vx, vy, wz))
 
     def twist_to_pwm(self, vx, vy, wz):
         """麦轮逆运动学（映射已按 2026-09-17 台架实测标定）。
@@ -223,6 +265,10 @@ class ChassisNode(Node):
         ax = clamp(100.0 * vx / self.vx_max, -100.0, 100.0)
         ay = clamp(100.0 * vy / self.vy_max, -100.0, 100.0)
         aw = clamp(100.0 * wz / self.wz_max, -100.0, 100.0)
+        # ⚠ 已知局限（P31 审查记录）：死区补偿在**速度空间**逐轴做，不保证混频后每个
+        #   电机 PWM 都高于启动阈值——v/ω 反号时混频相消（例：v→ax=14、ω→aw=-9 时
+        #   轮 B=-5，可能仍不转），低速弧线段执行会偏离控制器预测，由 /odom 闭环兜底。
+        #   彻底解法是混频后在 PWM 空间抬升 |PWM|<阈值的通道，但会破坏混频语义，暂不做。
 
         a = -ax + ay + aw
         b = -ax - ay - aw
@@ -233,13 +279,17 @@ class ChassisNode(Node):
     def send_pwm(self, pwm4):
         if pwm4 == self.last_pwm:
             return  # 值未变化不重发，把串口带宽留给编码器轮询
-        self.last_pwm = pwm4
         if self.ser is None:
+            self.last_pwm = pwm4
             self.get_logger().info('dry_run PWM: %s' % pwm4, throttle_duration_sec=1.0)
             return
         try:
             self.ser.spwm(pwm4)
+            # P31：只有发送成功才缓存。原实现先缓存后发送，串口瞬断时失败指令被记为
+            #   "已发"→ 相同指令（含停车零速）被去重吞掉 → 车带旧 PWM 跑飞（安全 bug）。
+            self.last_pwm = pwm4
         except Exception as e:
+            self.last_pwm = None   # 失败则强制下次重发（配合 on_poll 的停车补发）
             self.get_logger().error('SPWM 发送失败：%s' % e, throttle_duration_sec=2.0)
 
     # ---------------- 编码器轮询 + 里程计 ----------------
@@ -251,6 +301,10 @@ class ChassisNode(Node):
             self.cmd_active = False
             self.get_logger().warn(
                 'cmd_vel 超时 %.2fs，自动停车' % self.cmd_timeout, throttle_duration_sec=2.0)
+        # P31：停车/超时状态每个轮询周期补发零速。send_pwm 的去重抑制成功后的重复
+        #   （零成本）；配合问题 1 修复（失败置 last_pwm=None），串口瞬断期间每 50ms
+        #   重试一次，恢复后必能停住——消除"单发停车失败即无兜底"的隐患。
+        if not self.cmd_active:
             self.send_pwm([0, 0, 0, 0])
 
         if self.ser is None:

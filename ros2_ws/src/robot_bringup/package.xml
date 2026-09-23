@@ -15,6 +15,19 @@
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>rosbag2</exec_depend>
 
+  <!-- nav2 导航栈（nav2.launch.py 直接起的节点） -->
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_smoother</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_waypoint_follower</exec_depend>
+  <exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>nav2_simple_commander</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

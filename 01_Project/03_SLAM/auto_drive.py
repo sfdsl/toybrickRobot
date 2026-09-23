@@ -54,7 +54,7 @@ try:
 except ImportError as e:
     raise SystemExit(
         '导入 ROS 2 模块失败：%s\n提示：先 source 环境（或用 ~/.bash_aliases 里的别名）\n'
-        '  source /opt/ros2-foxy/install/setup.bash\n'
+        '  source /opt/ros/humble/setup.bash\n'
         '  source ~/RobotCode/ros2_ws/install/setup.bash' % e)
 
 RATE = 20.0         # 控制/发布循环频率 Hz（须 > 看门狗 1/cmd_timeout）
@@ -183,7 +183,10 @@ class AutoDriver(Node):
             err = target - abs(acc)
             if err <= tol:
                 break
-            w = min(self.v_turn, max(0.12, 2.0 * err))
+            # ⚠ P24 实测：末端减速到 ω=0.12 rad/s 会落进底盘死区（≈0.15）——最后 ~3°
+            #   永远转不完，err 卡在 1.8° 直到超时（spin 真机实测：360° 只差 1.8° 卡住）。
+            #   下限抬到 0.18：过冲 ≤0.5°/周期，1~2 个周期内收敛，且远高于死区。
+            w = min(self.v_turn, max(0.18, 2.0 * err))
             ramp = min(1.0, (time.time() - t_start) / 0.4)
             self.send(0.0, sign * w * ramp)
 
@@ -377,7 +380,10 @@ def main():
         print('已停车。' + ('' if aborted is None else '（%s）' % aborted))
         print('提示：地图窗口 mapv ｜ 保存地图 savemap')
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except rclpy._rclpy_pybind11.RCLError:
+            pass    # Ctrl-C 时 rclpy 已自行 shutdown，重复调用会抛 RCLError，忽略即可
     return 0
 
 

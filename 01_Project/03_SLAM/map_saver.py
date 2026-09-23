@@ -8,7 +8,7 @@
 
 运行前提：
     - slam_toolbox 正在运行（/map 有发布）
-    - 已 source ROS 2 环境（/opt/ros2-foxy/install/setup.bash）
+    - 已 source ROS 2 环境（/opt/ros/humble/setup.bash）
 注意：
     /map 使用 transient_local（latched）QoS，本脚本已按匹配 QoS 订阅，
     即使地图发布很久后启动也能拿到最后一帧。

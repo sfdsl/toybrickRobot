@@ -51,13 +51,16 @@ try:
 except ImportError as e:
     raise SystemExit(
         '导入模块失败：%s\n提示：先 source 环境\n'
-        '  source /opt/ros2-foxy/install/setup.bash\n'
+        '  source /opt/ros/humble/setup.bash\n'
         '  source ~/RobotCode/ros2_ws/install/setup.bash' % e)
 
 MAP_DEFAULT = os.path.expanduser('~/RobotCode/04_map/robot_map')
 TF_TIMEOUT = 1.5        # 位姿断流判据（秒）
-STOP_NEAR = 0.15        # 前向急停距离 m
-SLOW_NEAR = 0.25        # 前向减速距离 m
+# ⚠ 2026-09-22 实测事故后上调：原 0.15 / 0.25 是"贴脸才停"的口径——
+#   人站在车前约 1.5 m 处（雷达确实读到 1.497 m），车照样直冲，到 0.15 m 才急停，
+#   等于怼到人身上才停。安全层是给人挡的，不是给纸箱挡的，保护区必须到 1 m 量级。
+STOP_NEAR = 0.45        # 前向急停距离 m（原 0.15）
+SLOW_NEAR = 1.00        # 前向减速距离 m（原 0.25）
 SECTOR_DEG = 30.0       # 前向扇区半角
 
 
@@ -160,6 +163,12 @@ def build_traversable(m, inflation=0.15, allow_unknown=False, min_obstacle_cells
     return (m['pgm'] == 254) & ~blocked
 
 
+def dist_to_obstacles(m, blocked):
+    """每格到最近障碍的距离（米）——"走宽处"代价与"路径自检"共用同一张图"""
+    return cv2.distanceTransform((~blocked).astype(np.uint8) * 255,
+                                 cv2.DIST_L2, 5) * m['res']
+
+
 def clearance_cost(m, blocked, open_dist=0.8, prefer_open=3.0, tight=0.35):
     """给"贴着障碍走"加价 → A* 宁愿绕远走敞亮处（**软约束，不改变可达性**）
 
@@ -176,12 +185,38 @@ def clearance_cost(m, blocked, open_dist=0.8, prefer_open=3.0, tight=0.35):
     """
     if prefer_open <= 0:
         return None
-    free = (~blocked).astype(np.uint8) * 255
-    d = cv2.distanceTransform(free, cv2.DIST_L2, 5) * m['res']
+    d = dist_to_obstacles(m, blocked)
     over = np.clip((open_dist - d) / max(1e-6, open_dist), 0.0, 1.0)
     cost = 1.0 + prefer_open * over ** 2
     cost[d < tight] *= 3.0
     return cost.astype(np.float32)
+
+
+def path_clearance_stats(m, d_obs, px_path):
+    """沿折线的"离真实障碍距离"统计：(最小, 平均, 窄处占比)
+
+    px_path = 像素折线（A* 原始链或抽稀+平滑后都行）。按 1 px 步长在每段上插值取距离，
+    量的是**车实际经过的那条线**，而不是只看拐点。
+    "窄处"= 离障碍 < 0.35 m（椅腿缝量级），与 `navcheck` 的 ④ 行同口径。
+    """
+    vals = []
+    if px_path:
+        # 注意：平滑后的折线是**浮点**坐标（Chaikin 取中点），索引前必须取整
+        x0, y0 = int(round(px_path[0][0])), int(round(px_path[0][1]))
+        if 0 <= x0 < m['w'] and 0 <= y0 < m['h']:
+            vals.append(float(d_obs[y0, x0]))
+    for (x0, y0), (x1, y1) in zip(px_path, px_path[1:]):
+        n = max(1, int(math.hypot(x1 - x0, y1 - y0)))
+        for k in range(n + 1):
+            t = k / n
+            x = int(round(x0 + (x1 - x0) * t))
+            y = int(round(y0 + (y1 - y0) * t))
+            if 0 <= x < m['w'] and 0 <= y < m['h']:
+                vals.append(float(d_obs[y, x]))
+    if not vals:
+        return 0.0, 0.0, 0.0
+    return (min(vals), sum(vals) / len(vals),
+            sum(1 for v in vals if v < 0.35) / float(len(vals)))
 
 
 def astar(trav, start, goal, cost=None):
@@ -305,6 +340,35 @@ def follow_px_path(m, trav, path, step_m=0.1, smooth_iter=2):
     return smooth_path(simplify_path(path, step), m, trav, smooth_iter)
 
 
+def snap_goal_px(m, trav, g_px, radius_m=0.5):
+    """目标点净化：目标像素若不可通行，就近吸附到可通行格（半径 radius_m 内）
+
+    **自研 `GoalNav.plan()` 与 `nav2_goal_bridge` 共用**（同一个"目标点净化"口径）——
+    nav2 自带的终点吸附只保证"不压到致命格"，会停在贴墙 0.11 m 处（实测，< 车半宽 0.12）；
+    自研的吸附基于**膨胀后**的可通行区，吸附点必然离障碍 ≥ 膨胀半径，车真能停进去。
+    所以换 nav2 后仍要用这个函数先净化目标点，再下发给 nav2。
+
+    返回 (g_px, snapped_world)：
+      · 目标本来就可通行 → (原 g_px, None)
+      · 吸附成功         → (吸附后像素, (x, y))
+      · 找不到可通行格   → (None, None)
+    """
+    if trav[g_px[1], g_px[0]]:
+        return g_px, None
+    r = int(round(radius_m / m['res']))
+    best = None
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            c, rw = g_px[0] + dx, g_px[1] + dy
+            if 0 <= c < m['w'] and 0 <= rw < m['h'] and trav[rw, c]:
+                d = math.hypot(dx, dy)
+                if best is None or d < best[0]:
+                    best = (d, (c, rw))
+    if best is None:
+        return None, None
+    return best[1], px_to_world(m, *best[1])
+
+
 def draw_overlay(m, trav, path, start_px, goal_px, out_png):
     """把可通行区/路径/起终点画成 PNG（--dry-run 用）"""
     img = np.full(m['pgm'].shape + (3,), 60, np.uint8)
@@ -332,6 +396,7 @@ class GoalNav(Node):
         # "走宽处"（软偏好）：用**未膨胀**的障碍图（含椅腿/未知区）算离障碍距离 → A* 逐格代价
         self.blocked, _ = blocked_mask(self.m, args.allow_unknown, args.min_obstacle_cells)
         self.cost = clearance_cost(self.m, self.blocked, args.open_dist, args.prefer_open)
+        self.d_obs = dist_to_obstacles(self.m, self.blocked)   # 路径自检用（每格离障碍多远）
         self.vmax = args.vmax
         self.wmax = args.wmax
         self.pose = None            # (x, y, yaw) 地图系
@@ -352,8 +417,8 @@ class GoalNav(Node):
         self.create_subscription(LaserScan, args.scan_topic, self.on_scan,
                                  qos_profile_sensor_data)
         if args.listen:
-            self.create_subscription(PoseStamped, '/goal_pose', self.on_goal, 10)
-            self.get_logger().info('等待 /goal_pose ...（frame_id 应为 map）')
+            self.create_subscription(PoseStamped, args.goal_topic, self.on_goal, 10)
+            self.get_logger().info('等待 %s ...（frame_id 应为 map）' % args.goal_topic)
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
 
@@ -451,21 +516,11 @@ class GoalNav(Node):
         snap = None
         if not (0 <= g_px[0] < self.m['w'] and 0 <= g_px[1] < self.m['h']):
             return None, '目标点在地图范围外'
-        if not self.trav[g_px[1], g_px[0]]:
-            # 就近吸附到可通行格（半径 0.5 m 内）
-            r = int(round(0.5 / self.m['res']))
-            best = None
-            for dy in range(-r, r + 1):
-                for dx in range(-r, r + 1):
-                    c, rw = g_px[0] + dx, g_px[1] + dy
-                    if 0 <= c < self.m['w'] and 0 <= rw < self.m['h'] and self.trav[rw, c]:
-                        d = math.hypot(dx, dy)
-                        if best is None or d < best[0]:
-                            best = (d, (c, rw))
-            if best is None:
-                return None, '目标点落在障碍/未知区（0.5m 内无可通行格）'
-            snap = px_to_world(self.m, *best[1])
-            g_px = best[1]
+        # 目标点净化（与 nav2_goal_bridge 共用的同一个函数）
+        g_px, snap = snap_goal_px(self.m, self.trav, g_px)
+        if g_px is None:
+            return None, '目标点落在障碍/未知区（0.5m 内无可通行格）'
+        if snap:
             self.get_logger().warn('目标点不可通行 → 就近吸附到 (%.2f, %.2f)' % snap)
         if not self.trav[s_px[1], s_px[0]]:
             return None, '当前位姿不在可通行区（车贴障碍太近？把车挪 20cm 重试）'
@@ -481,6 +536,13 @@ class GoalNav(Node):
                                            smooth_iter=self.a.smooth_iter)
         if why_post:
             self.get_logger().info('路径后处理：%s' % why_post)
+        # 路径自检（对应 navcheck 的 ①④ 行）：量一遍车实际要走的那条线离障碍多远
+        mn, avg, narrow = path_clearance_stats(self.m, self.d_obs, px_path)
+        self.get_logger().info('路径自检：离真实障碍最近 %.3f m｜平均 %.3f m｜窄处(<0.35 m) %.0f%%'
+                               % (mn, avg, 100.0 * narrow))
+        if mn < 0.12:
+            self.get_logger().warn('⚠ 路径最近只有 %.3f m（< 车半宽 0.12 m）→ 建议换目标点；'
+                                   '确需通过就先把挡路的椅子挪开或重扫地图' % mn)
         wp = [px_to_world(self.m, *p) for p in px_path]
         total = path_length_m(self.m, px_path)
         my_seq = self.goal_seq             # 记下出发时的目标序号（途中换目标要能看出来）
@@ -627,6 +689,9 @@ def main():
                     help='前向安全扇区半角 度（默认 %.0f）' % SECTOR_DEG)
     ap.add_argument('--scan-topic', default='/scan',
                     help='雷达话题（默认 /scan；自测可换测试话题，避免干扰真机 SLAM）')
+    ap.add_argument('--goal-topic', default='/goal_pose',
+                    help='目标点话题（默认 /goal_pose；**自测务必换测试话题**，'
+                         '否则真机 nav 会收到你的测试目标并真的开过去）')
     ap.add_argument('--tf-parent', default='map',
                     help='位姿来源：父坐标系（默认 map；自测时可换成不冲突的坐标系）')
     ap.add_argument('--tf-child', default='base_link',
@@ -699,7 +764,7 @@ def main():
     # 一次性 --goal 且没开 --listen：跑完这个点就退出（保持老行为）
     once = (node.goal is not None) and not args.listen
     if node.goal is None:
-        node.get_logger().info('等待 /goal_pose ...（到达后继续等下一个；Ctrl-C 退出）')
+        node.get_logger().info('等待 %s ...（到达后继续等下一个；Ctrl-C 退出）' % args.goal_topic)
 
     cur_seq, tries = None, 0
     while rclpy.ok():

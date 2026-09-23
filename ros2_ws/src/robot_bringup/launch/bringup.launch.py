@@ -52,6 +52,7 @@ def generate_launch_description():
     port = LaunchConfiguration('port')
     view = LaunchConfiguration('view')
     nav = LaunchConfiguration('nav')
+    nav2 = LaunchConfiguration('nav2')
     bag = LaunchConfiguration('bag')
     bag_dir = LaunchConfiguration('bag_dir')
 
@@ -67,6 +68,11 @@ def generate_launch_description():
         DeclareLaunchArgument('view', default_value='8.0', description='手机端地图视野（米）'),
         DeclareLaunchArgument('nav', default_value='false',
                               description='是否同时起导航监听（goal_nav --listen：手机点一个点就去一个点）'),
+        # nav2:=true 时启动 nav2 全栈（bt_navigator + DWB + collision_monitor）。
+        # ⚠ 与 nav:=true（自研 goal_nav --listen）互斥：两者都直接发 /cmd_vel，同开会打架。
+        #   手机网页点目标 → /goal_pose → nav2_goal_bridge（净化）→ navigate_to_pose。
+        DeclareLaunchArgument('nav2', default_value='false',
+                              description='启动 nav2 全栈（默认 false；开启时自动忽略 nav）'),
         DeclareLaunchArgument('bag', default_value='false', description='是否同时录 rosbag'),
         DeclareLaunchArgument('bag_dir', default_value=DEFAULT_BAG_DIR,
                               description='rosbag 输出目录'),
@@ -102,10 +108,23 @@ def generate_launch_description():
     )
 
     # 5) 可选：导航监听（连续模式：到达一个点后继续等下一个目标）
+    #    nav2:=true 时自动屏蔽 —— goal_nav 与 nav2 都直接发 /cmd_vel，不能同开
     nav_proc = ExecuteProcess(
         cmd=['python3', os.path.join(SLAM_TOOLS, 'goal_nav.py'), '--listen'],
         output='screen',
-        condition=IfCondition(nav),
+        condition=IfCondition(PythonExpression(
+            ["'", nav, "' == 'true' and '", nav2, "' == 'false'"])),
+    )
+
+    # 5b) 可选：nav2 全栈（collision_monitor 在 nav2.launch.py 内一并起）
+    nav2_stack = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nav2.launch.py')),
+        launch_arguments={'goal_topic': '/goal_pose',
+                          'cmd_vel_out': '/cmd_vel',
+                          'watchdog': 'true'}.items(),   # P23：恢复启用（§9.3 欠账）。9/23 雷达
+                          # USB 抖动事故证明需要它兜底：/odom 断流 1.5s → 零速 + estop 取消导航
+        condition=IfCondition(nav2),
     )
 
     # 6) 可选：录包（复盘用）
@@ -118,9 +137,10 @@ def generate_launch_description():
 
     banner = LogInfo(msg=['一键启动（launch）：mode=', mode,
                           ' ｜ 导航监听 nav=', nav,
+                          ' ｜ nav2 栈 nav2=', nav2,
                           ' ｜ 手机网页端口 ', port,
                           ' ｜ Ctrl-C 停止全部'])
 
     return LaunchDescription(declared + [banner, chassis, lidar,
                                          slam_mapping, slam_localization,
-                                         phone_proc, nav_proc, bag_proc])
+                                         phone_proc, nav_proc, nav2_stack, bag_proc])

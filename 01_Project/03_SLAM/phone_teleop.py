@@ -8,6 +8,8 @@
       ~/RobotCode/04_map/（文件名自动带时间戳，含 .pgm/.yaml + .posegraph/.data）。
       地图上**点一下**即设置导航目标点（N4）：画面像素 → 世界坐标 → 发 /goal_pose。
       「回原点」按钮：一键把目标设为地图原点 (0,0)（= 建图起点，到点后车头朝建图开局方向）。
+      **点选/回原点前会本地预检**（与 `nav` 同一份规划代码试算：能否规划、路径多长、离障碍多远）——
+      不可达就**不下发目标**，直接告诉你要换点；预检按默认参数，`--no-precheck` 可关。
       地图支持**缩放/平移**（捏合缩放、单指拖动、双击复位）——缩放是**服务端重渲染**，
       所以放大后依然清晰，点选坐标也自动跟着缩放走。
 
@@ -57,10 +59,11 @@ try:
     import rclpy
     from geometry_msgs.msg import PoseStamped, Twist
     from nav_msgs.msg import Odometry
+    from nav2_msgs.action import FollowWaypoints
 except ImportError as e:
     raise SystemExit(
         '导入模块失败：%s\n提示：先 source 环境（或用 ~/.bash_aliases 里的别名 phone）\n'
-        '  source /opt/ros2-foxy/install/setup.bash\n'
+        '  source /opt/ros/humble/setup.bash\n'
         '  source ~/RobotCode/ros2_ws/install/setup.bash' % e)
 
 from map_viewer import MapViewer      # 复用地图订阅 + 渲染（同目录）
@@ -142,6 +145,7 @@ PAGE = """<!DOCTYPE html>
     <div id="btns">
       <button id="save">保存地图</button>
       <button id="home">回原点</button>
+      <button id="wpm">多点</button>
       <button id="goalclr">清除目标·停车</button>
     </div>
     <div id="zbtns">
@@ -173,7 +177,10 @@ const saveBtn=document.getElementById('save'), toast=document.getElementById('to
 const mbox=document.getElementById('mapbox'), mimg=document.getElementById('map');
 const goalClr=document.getElementById('goalclr'), hud=document.getElementById('hud');
 const homeBtn=document.getElementById('home');
+const wpmBtn=document.getElementById('wpm');
 let vmax=0.15, wmax=0.60, timer=null, vx=0, wz=0, active=false;
+// P34 多点导航：wpMode=排队中（点地图入队）；再按「多点」按钮 = 出发
+let wpMode=false, wpN=0;
 
 function cfg(){ vmax=vs.value/100; wmax=ws.value/100;
   document.getElementById('vl').textContent=vmax.toFixed(2);
@@ -252,6 +259,13 @@ function setGoalAt(cx, cy){
   const g=mapGeom();
   const u=(cx-g.ox)/g.sc, v=(cy-g.oy)/g.sc;                  // 画面像素
   if(u<0||v<0||u>g.nw||v>g.nh){ showToast('点到画面外的黑边了，请点地图上', 3000); return; }
+  if(wpMode){                                                // 多点模式：入队，不停车不下发
+    fetch('/wp/add?u='+u.toFixed(1)+'&v='+v.toFixed(1)).then(r=>r.json()).then(s=>{
+      if(s.ok){ wpN=s.n; wpmBtn.textContent='出发('+wpN+')'; }
+      showToast((s.ok?'':'✗ ')+(s.msg||''), s.ok?3000:6000);
+    }).catch(()=>showToast('✗ 入队失败：连不上服务', 4000));
+    return;
+  }
   active=false; setKnob(0,0,false); halt();                  // 先停车，避免和导航抢控制
   fetch('/goal?u='+u.toFixed(1)+'&v='+v.toFixed(1)).then(r=>r.json()).then(s=>{
     showToast((s.ok?'✓ ':'✗ ')+(s.msg||''), s.ok?6000:8000);
@@ -259,6 +273,10 @@ function setGoalAt(cx, cy){
 }
 
 mbox.addEventListener('pointerdown', e=>{
+  // ⚠ 修复：按钮(#btns/#zbtns/HUD)都在 mapbox 内——不排除的话 setPointerCapture 会把
+  //   click 的 target 捕获到 mapbox，按钮 onclick 永远收不到（实测"回原点"点了没反应，
+  //   反而弹出"点到画面外的黑边"——按钮坐标被当成地图点选换算了）。只在地图图片上响应。
+  if(e.target !== mimg) return;
   gp.set(e.pointerId, {x:e.clientX, y:e.clientY});
   try{ mbox.setPointerCapture(e.pointerId); }catch(_){}
   if(gp.size===1){ startPt={x:e.clientX, y:e.clientY}; moved=false; twoFinger=false; }
@@ -308,7 +326,30 @@ saveBtn.onclick=()=>{
     .finally(()=>{ saveBtn.disabled=false; saveBtn.textContent='保存地图'; });
 };
 goalClr.onclick=()=>{
+  if(wpMode || wpN>0){                       // 多点模式：清队列/取消执行
+    fetch('/wp/clear').then(r=>r.json()).then(s=>{
+      showToast(s.msg||'队列已清空', 3000);
+      wpMode=false; wpN=0; wpmBtn.textContent='多点'; wpmBtn.style.background='';
+    }).catch(()=>{});
+    return;
+  }
   fetch('/goal/clear').then(r=>r.json()).then(s=>showToast(s.msg||'已清除', 3000)).catch(()=>{});
+};
+
+// P34 多点导航：三态按钮——「多点」进入排队 → 点地图入队 → 「出发(N)」一键连发
+wpmBtn.onclick=()=>{
+  if(!wpMode){
+    fetch('/wp/clear').then(r=>r.json()).then(s=>{      // 进排队前先清残留
+      wpMode=true; wpN=0; wpmBtn.textContent='出发(0)';
+      wpmBtn.style.background='#2e7d32';
+      showToast('多点模式：点地图依次排队，再按此按钮出发', 4500);
+    }).catch(()=>showToast('✗ 连不上服务', 4000));
+  } else {
+    fetch('/wp/go').then(r=>r.json()).then(s=>{
+      showToast((s.ok?'✓ ':'✗ ')+(s.msg||''), s.ok?6000:8000);
+      if(s.ok){ wpMode=false; wpN=0; wpmBtn.textContent='多点'; wpmBtn.style.background=''; }
+    }).catch(()=>showToast('✗ 连不上服务', 4000));
+  }
 };
 // 一键回原点：目标 = 地图原点 (0,0) = 建图起点（需另开终端跑 nav --listen 才会动）
 homeBtn.onclick=()=>{
@@ -334,7 +375,7 @@ setInterval(()=>{ fetch('/state').then(r=>r.json()).then(s=>{
   d.className='dot '+(s.cmd_age<1?'ok':'bad'); c.textContent=s.cmd_age<1?'已连接':'看门狗待机';
   document.getElementById('pose').textContent=s.pose||'-';
   document.getElementById('vel').textContent=s.vel||'-';
-  document.getElementById('goal').textContent=s.goal||'-';
+  document.getElementById('goal').textContent=(s.wp?('多点 '+s.wp+' ｜ '):'')+(s.goal||'-');
   if(s.view){ document.getElementById('zoom').textContent=s.view;
               if(view.range===null){ view.range=s.view_range||8.0; view.dx=0; view.dy=0; } }
 }).catch(()=>{ document.getElementById('dot').className='dot bad';
@@ -343,11 +384,64 @@ setInterval(()=>{ fetch('/state').then(r=>r.json()).then(s=>{
 """
 
 
+import goal_nav as gn          # noqa: E402（与本文件同目录：预检直接复用 nav 的规划代码）
+
+
+class GoalPrecheck:
+    """点选目标前的"预检"：用与 `nav` **同一份规划代码**在本地试算一遍（不发任何指令）
+
+    复用 `goal_nav` 的 `load_map` / `build_traversable` / `blocked_mask` / `clearance_cost` /
+    `GoalNav.plan()` / `follow_px_path()` / `path_clearance_stats()`，起点取手机侧当前位姿，
+    所以"预检通过"≈"nav 也能规划出同一条路径"。
+
+    地图/代价图只加载一次；任何异常都降级为"不预检"，**绝不阻塞点选**。
+    注意：预检用的是**默认参数**（inflation 0.15 / prefer-open 3 / min-obstacle-cells 0）；
+    如果 `nav` 起了非默认参数，结论可能略有出入。
+    """
+
+    def __init__(self, map_prefix, inflation=0.15, prefer_open=3.0, open_dist=0.8,
+                 min_obstacle_cells=0, smooth_iter=2):
+        self.m = gn.load_map(map_prefix)
+        self.trav = gn.build_traversable(self.m, inflation, False, min_obstacle_cells)
+        self.blocked, _ = gn.blocked_mask(self.m, False, min_obstacle_cells)
+        self.cost = gn.clearance_cost(self.m, self.blocked, open_dist, prefer_open)
+        self.d_obs = gn.dist_to_obstacles(self.m, self.blocked)
+        self.smooth_iter = smooth_iter
+        self.inflation = inflation
+
+    class _Shim:
+        """GoalNav.plan() 只用到这几个属性 / get_logger()"""
+        def __init__(self, m, trav, blocked, cost, pose):
+            self.m, self.trav, self.blocked, self.cost, self.pose = m, trav, blocked, cost, pose
+
+        def get_logger(self):
+            class _L:
+                def warn(self, msg):
+                    pass
+
+                def info(self, msg):
+                    pass
+            return _L()
+
+    def check(self, start_xy, goal_xy):
+        """返回 dict(ok, msg, dist, min_clear, narrow)；失败时 msg = 规划失败原因"""
+        shim = self._Shim(self.m, self.trav, self.blocked, self.cost,
+                          (float(start_xy[0]), float(start_xy[1]), 0.0))
+        path, why = gn.GoalNav.plan(shim, (float(goal_xy[0]), float(goal_xy[1])))
+        if path is None:
+            return {'ok': False, 'msg': why}
+        px, _ = gn.follow_px_path(self.m, self.trav, path, 0.1, self.smooth_iter)
+        mn, avg, narrow = gn.path_clearance_stats(self.m, self.d_obs, px)
+        return {'ok': True, 'msg': 'ok', 'dist': gn.path_length_m(self.m, px),
+                'min_clear': mn, 'avg': avg, 'narrow': narrow}
+
+
 class PhoneTeleop(MapViewer):
     """在地图查看器基础上：发 /cmd_vel、设/清导航目标（/goal_pose）、保存地图、网页服务状态"""
 
     def __init__(self, view_range, vmax, wmax, topic='/cmd_vel',
-                 save_dir=DEFAULT_SAVE_DIR, goal_topic='/goal_pose'):
+                 save_dir=DEFAULT_SAVE_DIR, goal_topic='/goal_pose',
+                 precheck=True, map_prefix=None):
         super().__init__(view_range)
         self.topic = topic
         self.vmax = vmax
@@ -361,10 +455,26 @@ class PhoneTeleop(MapViewer):
         self.odom_vel = None          # (vx, wz) 底盘回报的实际速度
         self.goal = None              # 最近一次设置的目标 (x, y, 时刻)，用于画面标注
         self.n_goal = 0
+        # P34 多点导航（10 方案 A2）：航点队列 + waypoint_follower 的 FollowWaypoints
+        self.wp_queue = []            # [(x, y), ...] 世界坐标，排队模式点地图追加
+        self.wp_running = False       # FollowWaypoints 正在执行
+        self.wp_cur = -1              # 当前航点序号（feedback 回报，0 起）
+        self.wp_gh = None             # goal handle（取消用）
+        self.wp_res_fut = None        # 结果 future（watch 线程轮询）
+        self.wp_client = None         # ActionClient（惰性创建）
+        self.wp_n = 0                 # 出发时的航点总数（进度显示用）
         self.view_range_cur = float(view_range)   # 当前视野（网页缩放会改它）
         self.view_off = (0.0, 0.0)                # 视窗中心相对车的偏移（米）
         self.pub = self.create_publisher(Twist, self.topic, 10)
         self.goal_pub = self.create_publisher(PoseStamped, goal_topic, 10)
+        # 点选预检：加载地图 + 代价图（只做一次）；失败只降级、不影响其它功能
+        self.precheck = None
+        if precheck:
+            try:
+                self.precheck = GoalPrecheck(os.path.expanduser(map_prefix or gn.MAP_DEFAULT))
+                self.get_logger().info('预检就绪：%s（与 nav 同一份规划代码）' % (map_prefix or gn.MAP_DEFAULT))
+            except Exception as e:
+                self.get_logger().warn('预检不可用（点选将跳过预检）：%s' % e)
         self.create_subscription(Odometry, '/odom', self.on_odom, 10)
 
     def on_odom(self, msg):
@@ -441,6 +551,27 @@ class PhoneTeleop(MapViewer):
                 return {'ok': False, 'msg': '点到了画面外'}
             x, y = x0 + u / s, y1 - v / s
         self.set_cmd(0.0, 0.0)                      # 先停一帧，避免与摇杆指令打架
+        # ── 预检：用与 nav 同一份规划代码本地试算（不发任何指令）──
+        pre, pre_note = None, ''
+        if self.precheck is not None:
+            pose = self.robot_pose()
+            if pose is None:
+                pre_note = '｜预检跳过（还没有位姿）'
+            else:
+                try:
+                    pre = self.precheck.check((pose[0], pose[1]), (x, y))
+                except Exception as e:
+                    pre = None
+                    self.get_logger().warn('预检异常（跳过）：%s' % e)
+        if pre is not None and not pre['ok']:
+            m = '✗ 预检未通过：%s —— 请换个点（确要强行下发：启动 phone 时加 --no-precheck）' % pre['msg']
+            self.get_logger().warn('目标 (%.2f, %.2f) 预检失败：%s' % (x, y, pre['msg']))
+            return {'ok': False, 'msg': m, 'x': round(float(x), 2), 'y': round(float(y), 2),
+                    'sub': 0}
+        if pre is not None:
+            pre_note = ('｜预检 ✓ 路径 %.2f m，离障碍最近 %.2f m（平均 %.2f）%s'
+                        % (pre['dist'], pre['min_clear'], pre['avg'],
+                           ' ⚠ 偏紧（<0.12 = 车半宽）' if pre['min_clear'] < 0.12 else ''))
         t = PoseStamped()
         t.header.frame_id = 'map'
         t.header.stamp = self.get_clock().now().to_msg()
@@ -452,7 +583,9 @@ class PhoneTeleop(MapViewer):
             self.n_goal += 1
         cell = self._cell_of(x, y)
         sub = self.goal_pub.get_subscription_count()
-        if cell is None:
+        if pre is not None:
+            note = pre_note                     # 预检结论比"单格判据"更可信
+        elif cell is None:
             note = '（还没收到 /map）'
         elif cell == 'out':
             note = '（在地图范围外，规划会失败）'
@@ -501,6 +634,137 @@ class PhoneTeleop(MapViewer):
         msg = '目标已清除' + ('（已让导航就地停车、回到等待状态）' if stopped else '')
         self.get_logger().info(msg)
         return {'ok': True, 'msg': msg, 'stopped': stopped}
+
+    # ---------------- 多点导航（10 方案 A2）：队列 + FollowWaypoints ----------------
+    def _wp_client(self):
+        if self.wp_client is None:
+            from rclpy.action import ActionClient
+            self.wp_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
+        return self.wp_client
+
+    def wp_add(self, u=None, v=None, x=None, y=None):
+        """多点模式：把一个点加入队列（不停车、不下发；出发时交给 waypoint_follower）"""
+        if x is None or y is None:
+            lv = self.last_view
+            if lv is None:
+                return {'ok': False, 'msg': '还没有地图画面，稍等再点'}
+            x0, y1, s, size = lv
+            if u is None or v is None or not (0 <= u < size and 0 <= v < size):
+                return {'ok': False, 'msg': '点到了画面外'}
+            x, y = x0 + u / s, y1 - v / s
+        x, y = float(x), float(y)
+        # 逐段预检：起点 = 队列里上一个点（首点用车的当前位姿）——与单目标同一份规划代码
+        if self.wp_queue:
+            start = self.wp_queue[-1]
+        else:
+            pose = self.robot_pose()
+            start = (pose[0], pose[1]) if pose is not None else None
+        note = ''
+        if self.precheck is not None and start is not None:
+            try:
+                pre = self.precheck.check(start, (x, y))
+                if pre is not None and not pre['ok']:
+                    m = '✗ 第 %d 点预检未通过：%s —— 请换个点' % (len(self.wp_queue) + 1, pre['msg'])
+                    self.get_logger().warn(m)
+                    return {'ok': False, 'msg': m, 'n': len(self.wp_queue)}
+                if pre is not None:
+                    note = '｜路径 %.2f m 离障 %.2f' % (pre['dist'], pre['min_clear'])
+            except Exception as e:
+                self.get_logger().warn('多点预检异常（跳过）：%s' % e)
+        self.wp_queue.append((x, y))
+        msg = '第 %d 点已排：x=%.2f y=%.2f%s' % (len(self.wp_queue), x, y, note)
+        self.get_logger().info(msg)
+        return {'ok': True, 'msg': msg, 'n': len(self.wp_queue),
+                'x': round(x, 2), 'y': round(y, 2)}
+
+    def wp_go(self):
+        """出发：把整个队列交给 waypoint_follower（内部逐段调 navigate_to_pose）"""
+        if self.wp_running:
+            return {'ok': False, 'msg': '多点导航正在执行（先「清除目标」取消再重排）'}
+        if not self.wp_queue:
+            return {'ok': False, 'msg': '队列为空：先在多点模式下点地图排队'}
+        ac = self._wp_client()
+        if not ac.wait_for_server(timeout_sec=3.0):
+            return {'ok': False,
+                    'msg': 'follow_waypoints 服务不在（robotnav --nav2 未起 nav2 栈？）'}
+        g = FollowWaypoints.Goal()
+        for (x, y) in self.wp_queue:
+            ps = PoseStamped()
+            ps.header.frame_id = 'map'
+            ps.header.stamp = self.get_clock().now().to_msg()
+            ps.pose.position.x, ps.pose.position.y = x, y
+            ps.pose.orientation.w = 1.0
+            g.poses.append(ps)
+        self.set_cmd(0.0, 0.0)
+        self.goal = None
+        fut = ac.send_goal_async(g, feedback_callback=self._wp_feedback)
+        t0 = time.time()
+        while not fut.done() and time.time() - t0 < 8.0:
+            time.sleep(0.05)
+        if not fut.done():
+            return {'ok': False, 'msg': 'follow_waypoints 响应超时'}
+        gh = fut.result()
+        if not gh.accepted:
+            return {'ok': False, 'msg': '航点任务被 nav2 拒绝'}
+        self.wp_gh = gh
+        self.wp_running = True
+        self.wp_cur = -1
+        self.wp_res_fut = gh.get_result_async()
+        n = len(self.wp_queue)
+        self.wp_n = n
+        self.wp_t0 = time.time()
+        self.get_logger().info('多点导航出发：%d 个航点' % n)
+        threading.Thread(target=self._wp_watch, args=(gh, list(self.wp_queue)),
+                         daemon=True).start()
+        return {'ok': True, 'msg': '多点出发：%d 个航点（进度见地图与终端）' % n, 'n': n}
+
+    def _wp_feedback(self, fb):
+        idx = int(fb.feedback.current_pose_idx)
+        if idx != self.wp_cur:
+            self.wp_cur = idx
+            self.get_logger().info('多点导航：正在前往第 %d/%d 点' % (idx + 1, len(self.wp_queue)))
+
+    def _wp_watch(self, gh, pts):
+        """后台线程：轮询结果 future（读布尔不碰 executor），打印每点误差与总耗时"""
+        t0 = time.time()
+        while rclpy.ok() and not self.wp_res_fut.done() and time.time() - t0 < 1800:
+            time.sleep(0.5)
+        self.wp_running = False
+        if not self.wp_res_fut.done():
+            self.get_logger().warn('多点导航 30 分钟超时，取消')
+            try:
+                gh.cancel_goal_async()
+            except Exception:
+                pass
+            return
+        try:
+            res = self.wp_res_fut.result().result
+            missed = list(res.missed_waypoints)
+        except Exception as e:
+            self.get_logger().error('多点导航结果读取失败：%s' % e)
+            return
+        if missed:
+            self.get_logger().warn('多点导航完成：未到达的航点序号 %s' % missed)
+        else:
+            self.get_logger().info('✓ 多点导航全部 %d 点到达，总耗时 %.0f s'
+                                   % (len(pts), time.time() - self.wp_t0))
+
+    def wp_clear(self):
+        """清空队列；若多点导航在执行则取消（车会在当前航点附近停下）"""
+        q = len(self.wp_queue)
+        self.wp_queue = []
+        cancelled = False
+        if self.wp_running and self.wp_gh is not None:
+            try:
+                self.wp_gh.cancel_goal_async()
+                cancelled = True
+            except Exception:
+                pass
+        self.wp_running = False
+        self.set_cmd(0.0, 0.0)
+        msg = '队列已清空（%d 点）' % q + ('｜多点导航已取消' if cancelled else '')
+        self.get_logger().info(msg)
+        return {'ok': True, 'msg': msg, 'cancelled': cancelled}
 
     def _world_px(self, x, y, size):
         """世界坐标 → 当前画面的像素位置（不在画面内返回 None）"""
@@ -596,6 +860,10 @@ class PhoneTeleop(MapViewer):
             'goal': ('x=%.2f y=%.2f%s' % (self.goal[0], self.goal[1],
                                           '' if self.goal_pub.get_subscription_count()
                                           else ' ⚠无监听')) if self.goal else None,
+            # P34 多点导航状态（HUD「目标」行显示队列/进度）
+            'wp': ('排队 %d 点' % len(self.wp_queue)) if self.wp_queue
+                  else ('执行中 %d/%d' % (self.wp_cur + 1, self.wp_n)
+                        if self.wp_running else None),
             'view': ('%.1f m%s' % (rng, ('，偏移 %.1f/%.1f' % (ox, oy))
                                    if abs(ox) > 0.05 or abs(oy) > 0.05 else '')),
             'view_range': round(rng, 3),        # 给网页初始化用（数值）
@@ -670,6 +938,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(self.node.goto_home())
         elif u.path == '/goal/clear':
             self._send_json(self.node.clear_goal())
+        elif u.path == '/wp/add':
+            # 多点导航：把一个点加入队列（u,v 画面像素 或 x,y 世界坐标）
+            try:
+                if 'x' in q and 'y' in q:
+                    info = self.node.wp_add(x=float(q['x'][0]), y=float(q['y'][0]))
+                else:
+                    info = self.node.wp_add(u=float(q.get('u', ['-1'])[0]),
+                                            v=float(q.get('v', ['-1'])[0]))
+            except (TypeError, ValueError):
+                info = {'ok': False, 'msg': '参数错误（需要 u,v 或 x,y）'}
+            self._send_json(info)
+        elif u.path == '/wp/go':
+            self._send_json(self.node.wp_go())
+        elif u.path == '/wp/clear':
+            self._send_json(self.node.wp_clear())
         elif u.path == '/savemap':
             # 保存地图（会阻塞几秒：等 serialize_map 服务写完文件）
             try:
@@ -717,6 +1000,21 @@ def render_loop(node, size):
                 cv2.putText(img, 'origin', (o[0] + 9, o[1] + 17),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 170, 255), 1)
             g = node.goal_px(size)
+            # P34 多点导航：画航点队列（青色点 + 编号 + 顺序连线）
+            q = list(node.wp_queue)
+            if q:
+                prev = node._world_px(q[0][0], q[0][1], size)
+                for i, (wx, wy) in enumerate(q):
+                    p = node._world_px(wx, wy, size)
+                    if p is None:
+                        prev = None
+                        continue
+                    cv2.circle(img, p, 5, (255, 160, 0), 2)
+                    cv2.putText(img, str(i + 1), (p[0] + 7, p[1] - 7),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 160, 0), 1)
+                    if prev is not None and i > 0:
+                        cv2.line(img, prev, p, (255, 160, 0), 1)
+                    prev = p
             if g is not None:
                 c = node.car_px(size)           # 平移后车不在画面中心 → 从车的位置连线
                 if c is not None:
@@ -758,13 +1056,19 @@ def main():
                     help='速度话题（默认 /cmd_vel；自测时可换成测试话题，不动真车）')
     ap.add_argument('-g', '--goal-topic', default='/goal_pose',
                     help='目标点话题（默认 /goal_pose；自测可换成测试话题）')
+    ap.add_argument('--no-precheck', action='store_true',
+                    help='关闭点选预检（默认开启：点选/回原点前用 nav 同源代码本地试算，'
+                         '不可达就不下发目标；预检按默认参数）')
+    ap.add_argument('--map', default=gn.MAP_DEFAULT,
+                    help='预检用的地图前缀（默认 %s）' % gn.MAP_DEFAULT)
     ap.add_argument('-s', '--save-dir', default=DEFAULT_SAVE_DIR,
                     help='保存地图的目录（默认 ~/RobotCode/04_map）')
     args = ap.parse_args()
 
     rclpy.init()
     node = PhoneTeleop(args.range, args.vmax, args.wmax, args.topic,
-                       os.path.expanduser(args.save_dir), args.goal_topic)
+                       os.path.expanduser(args.save_dir), args.goal_topic,
+                       precheck=not args.no_precheck, map_prefix=args.map)
     Handler.node = node
 
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()

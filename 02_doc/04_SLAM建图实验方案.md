@@ -51,7 +51,7 @@
 
 ```bash
 # 终端 1：雷达（串口的唯一主人）
-source /opt/ros2-foxy/install/setup.bash
+source /opt/ros/humble/setup.bash
 source ~/RobotCode/ros2_ws/install/setup.bash
 ros2 launch ldlidar ld14p.launch.py
 
@@ -98,7 +98,7 @@ cd ~/RobotCode/ros2_ws/src
 git clone -b foxy-devel https://github.com/SteveMacenski/slam_toolbox.git
 
 cd ~/RobotCode/ros2_ws
-source /opt/ros2-foxy/install/setup.bash
+source /opt/ros/humble/setup.bash
 colcon build --packages-select slam_toolbox --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
@@ -131,15 +131,15 @@ source install/setup.bash
 
 ```bash
 # 终端 A：底盘
-source /opt/ros2-foxy/install/setup.bash && source ~/RobotCode/ros2_ws/install/setup.bash
+source /opt/ros/humble/setup.bash && source ~/RobotCode/ros2_ws/install/setup.bash
 ros2 run base_driver chassis_node
 
 # 终端 B：雷达
-source /opt/ros2-foxy/install/setup.bash && source ~/RobotCode/ros2_ws/install/setup.bash
+source /opt/ros/humble/setup.bash && source ~/RobotCode/ros2_ws/install/setup.bash
 ros2 launch ldlidar ld14p.launch.py
 
 # 终端 C：SLAM（异步在线建图）
-source /opt/ros2-foxy/install/setup.bash && source ~/RobotCode/ros2_ws/install/setup.bash
+source /opt/ros/humble/setup.bash && source ~/RobotCode/ros2_ws/install/setup.bash
 ros2 launch slam_toolbox online_async_launch.py
 ```
 

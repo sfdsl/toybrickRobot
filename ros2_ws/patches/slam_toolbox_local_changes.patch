@@ -1,3 +1,23 @@
+diff --git a/CMake/FindTBB.cmake b/CMake/FindTBB.cmake
+index 6fc1ab3..fc6e36f 100644
+--- a/CMake/FindTBB.cmake
++++ b/CMake/FindTBB.cmake
+@@ -397,8 +397,14 @@ findpkg_finish(TBB_MALLOC_PROXY tbbmalloc_proxy)
+ if(NOT TBB_VERSION)
+ 
+  #only read the start of the file
++ # Ubuntu 22.04 的 oneTBB 2021.5 已移除 tbb_stddef.h，版本宏改在 oneapi/tbb/version.h
++ if(EXISTS "${TBB_INCLUDE_DIR}/tbb/tbb_stddef.h")
++   set(_TBB_VERSION_FILE "${TBB_INCLUDE_DIR}/tbb/tbb_stddef.h")
++ else()
++   set(_TBB_VERSION_FILE "${TBB_INCLUDE_DIR}/oneapi/tbb/version.h")
++ endif()
+  file(STRINGS
+-      "${TBB_INCLUDE_DIR}/tbb/tbb_stddef.h"
++      "${_TBB_VERSION_FILE}"
+       TBB_VERSION_CONTENTS
+       REGEX "VERSION")
+ 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 40f2793..5550e9a 100644
 --- a/CMakeLists.txt
@@ -190,6 +210,19 @@ index 7520536..b6b2bfc 100644
      resolution: 0.05
      max_laser_range: 20.0 #for rastering images
      minimum_time_interval: 0.5
+diff --git a/include/slam_toolbox/visualization_utils.hpp b/include/slam_toolbox/visualization_utils.hpp
+index 3d2dfce..d6bc02f 100644
+--- a/include/slam_toolbox/visualization_utils.hpp
++++ b/include/slam_toolbox/visualization_utils.hpp
+@@ -50,7 +50,7 @@ inline visualization_msgs::msg::Marker toMarker(
+   marker.color.b = 0.0;
+   marker.color.a = 1.;
+   marker.action = visualization_msgs::msg::Marker::ADD;
+-  marker.lifetime = rclcpp::Duration(0.);
++  marker.lifetime = rclcpp::Duration::from_seconds(0.);
+ 
+   return marker;
+ }
 diff --git a/launch/online_async_launch.py b/launch/online_async_launch.py
 index 9965ca8..0197b49 100644
 --- a/launch/online_async_launch.py
@@ -322,3 +355,135 @@ index 74ad50e..fff8abf 100644
      ld.add_action(start_sync_slam_toolbox_node)
  
      return ld
+diff --git a/lib/karto_sdk/include/karto_sdk/Mapper.h b/lib/karto_sdk/include/karto_sdk/Mapper.h
+index ae6c8ca..52a4a1f 100644
+--- a/lib/karto_sdk/include/karto_sdk/Mapper.h
++++ b/lib/karto_sdk/include/karto_sdk/Mapper.h
+@@ -27,7 +27,7 @@
+ #include <utility>
+ #include <string>
+ 
+-#include "tbb/parallel_do.h"
++#include "tbb/parallel_for_each.h"
+ #include "tbb/parallel_for.h"
+ #include "tbb/blocked_range.h"
+ 
+diff --git a/lib/karto_sdk/src/Mapper.cpp b/lib/karto_sdk/src/Mapper.cpp
+index 27c0293..669cc41 100644
+--- a/lib/karto_sdk/src/Mapper.cpp
++++ b/lib/karto_sdk/src/Mapper.cpp
+@@ -770,7 +770,8 @@ kt_double ScanMatcher::CorrelateScan(
+   m_nAngles = nAngles;
+   m_searchAngleResolution = searchAngleResolution;
+   m_doPenalize = doPenalize;
+-  tbb::parallel_do(m_yPoses, (*this) );
++  // oneTBB 2021 移除了 parallel_do，改用等价的 parallel_for_each
++  tbb::parallel_for_each(m_yPoses.begin(), m_yPoses.end(), (*this) );
+ 
+   // find value of best response (in [0; 1])
+   kt_double bestResponse = -1;
+diff --git a/src/experimental/slam_toolbox_lifelong_node.cpp b/src/experimental/slam_toolbox_lifelong_node.cpp
+index 6a8401b..2a4ddda 100644
+--- a/src/experimental/slam_toolbox_lifelong_node.cpp
++++ b/src/experimental/slam_toolbox_lifelong_node.cpp
+@@ -27,7 +27,7 @@ int main(int argc, char ** argv)
+   int stack_size = 40000000;
+   {
+     auto temp_node = std::make_shared<rclcpp::Node>("slam_toolbox");
+-    temp_node->declare_parameter("stack_size_to_use");
++    temp_node->declare_parameter("stack_size_to_use", stack_size);
+     if (temp_node->get_parameter("stack_size_to_use", stack_size)) {
+       RCLCPP_INFO(temp_node->get_logger(), "Node using stack size %i", (int)stack_size);
+       const rlim_t max_stack_size = stack_size;
+diff --git a/src/slam_toolbox_async_node.cpp b/src/slam_toolbox_async_node.cpp
+index 9343668..f7541ac 100644
+--- a/src/slam_toolbox_async_node.cpp
++++ b/src/slam_toolbox_async_node.cpp
+@@ -27,7 +27,7 @@ int main(int argc, char ** argv)
+   int stack_size = 40000000;
+   {
+     auto temp_node = std::make_shared<rclcpp::Node>("slam_toolbox");
+-    temp_node->declare_parameter("stack_size_to_use");
++    temp_node->declare_parameter("stack_size_to_use", stack_size);
+     if (temp_node->get_parameter("stack_size_to_use", stack_size)) {
+       RCLCPP_INFO(temp_node->get_logger(), "Node using stack size %i", (int)stack_size);
+       const rlim_t max_stack_size = stack_size;
+diff --git a/src/slam_toolbox_common.cpp b/src/slam_toolbox_common.cpp
+index c9ab7a5..ae00488 100644
+--- a/src/slam_toolbox_common.cpp
++++ b/src/slam_toolbox_common.cpp
+@@ -40,7 +40,7 @@ SlamToolbox::SlamToolbox(rclcpp::NodeOptions options)
+   first_measurement_(true),
+   process_near_pose_(nullptr),
+   transform_timeout_(rclcpp::Duration::from_seconds(0.5)),
+-  minimum_time_interval_(0.)
++  minimum_time_interval_(rclcpp::Duration::from_seconds(0.))
+ /*****************************************************************************/
+ {
+   smapper_ = std::make_unique<mapper_utils::SMapper>();
+@@ -162,7 +162,7 @@ void SlamToolbox::setParams()
+   }
+ 
+   smapper_->configure(shared_from_this());
+-  this->declare_parameter("paused_new_measurements");
++  this->declare_parameter("paused_new_measurements", false);
+   this->set_parameter({"paused_new_measurements", false});
+ }
+ 
+@@ -300,13 +300,18 @@ bool SlamToolbox::shouldStartWithPoseGraph(
+ {
+   // if given a map to load at run time, do it.
+   this->declare_parameter("map_file_name", std::string(""));
+-  auto map_start_pose = this->declare_parameter("map_start_pose");
+-  auto map_start_at_dock = this->declare_parameter("map_start_at_dock");
++  // Humble：动态类型声明"未设置"参数，再取 rclcpp::Parameter 判断用户是否提供
++  rcl_interfaces::msg::ParameterDescriptor unset_desc;
++  unset_desc.dynamic_typing = true;
++  this->declare_parameter("map_start_pose", rclcpp::ParameterValue(), unset_desc);
++  this->declare_parameter("map_start_at_dock", rclcpp::ParameterValue(), unset_desc);
++  auto map_start_pose = this->get_parameter("map_start_pose");
++  auto map_start_at_dock = this->get_parameter("map_start_at_dock");
+   filename = this->get_parameter("map_file_name").as_string();
+   if (!filename.empty()) {
+     std::vector<double> read_pose;
+     if (map_start_pose.get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+-      read_pose = map_start_pose.get<std::vector<double>>();
++      read_pose = map_start_pose.get_value<std::vector<double>>();
+       start_at_dock = false;
+       if (read_pose.size() != 3) {
+         RCLCPP_ERROR(get_logger(), "LocalizationSlamToolbox: Incorrect "
+@@ -321,7 +326,7 @@ bool SlamToolbox::shouldStartWithPoseGraph(
+         pose.theta = read_pose[2];
+       }
+     } else if (map_start_at_dock.get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+-      start_at_dock = map_start_at_dock.get<bool>();
++      start_at_dock = map_start_at_dock.get_value<bool>();
+     } else {
+       RCLCPP_ERROR(get_logger(), "LocalizationSlamToolbox: Map starting "
+           "pose not specified. Set either map_start_pose or map_start_at_dock.");
+diff --git a/src/slam_toolbox_localization_node.cpp b/src/slam_toolbox_localization_node.cpp
+index 8a9acfe..b90f625 100644
+--- a/src/slam_toolbox_localization_node.cpp
++++ b/src/slam_toolbox_localization_node.cpp
+@@ -27,7 +27,7 @@ int main(int argc, char ** argv)
+   int stack_size = 40000000;
+   {
+     auto temp_node = std::make_shared<rclcpp::Node>("slam_toolbox");
+-    temp_node->declare_parameter("stack_size_to_use");
++    temp_node->declare_parameter("stack_size_to_use", stack_size);
+     if (temp_node->get_parameter("stack_size_to_use", stack_size)) {
+       RCLCPP_INFO(temp_node->get_logger(), "Node using stack size %i", (int)stack_size);
+       const rlim_t max_stack_size = stack_size;
+diff --git a/src/slam_toolbox_sync_node.cpp b/src/slam_toolbox_sync_node.cpp
+index 07088ff..25285c8 100644
+--- a/src/slam_toolbox_sync_node.cpp
++++ b/src/slam_toolbox_sync_node.cpp
+@@ -27,7 +27,7 @@ int main(int argc, char ** argv)
+   int stack_size = 40000000;
+   {
+     auto temp_node = std::make_shared<rclcpp::Node>("slam_toolbox");
+-    temp_node->declare_parameter("stack_size_to_use");
++    temp_node->declare_parameter("stack_size_to_use", stack_size);
+     if (temp_node->get_parameter("stack_size_to_use", stack_size)) {
+       RCLCPP_INFO(temp_node->get_logger(), "Node using stack size %i", (int)stack_size);
+       const rlim_t max_stack_size = stack_size;

@@ -17,7 +17,7 @@
 # ============================================================
 set -u
 
-SETUP="/opt/ros2-foxy/install/setup.bash"
+SETUP="/opt/ros/humble/setup.bash"
 WS="$HOME/RobotCode/ros2_ws"
 MODE="mapping"
 
@@ -39,13 +39,26 @@ stop_all() {
     pkill -INT -f 'slam_toolbox'             2>/dev/null; sleep 0.5
     pkill -INT -f 'ldlidar'                  2>/dev/null; sleep 0.5
     pkill -INT -f 'chassis_node'             2>/dev/null; sleep 1.5
-    for pat in 'phone_teleop.py' 'slam_toolbox' 'ldlidar' 'chassis_node'; do
+    # ⚠ P25：nav2 也在 robotnav --nav2 的 launch 里——不清会把旧 nav2 留成孤儿
+    #   （实测：robotstop 后 bringup 死了、nav2 半边还挂着，新 launch 起来后两套打架）
+    pkill -INT -f 'nav2.launch.py'           2>/dev/null; sleep 0.5
+    pkill -INT -f 'lib/nav2_'                2>/dev/null; sleep 0.5
+    pkill -INT -f 'nav2_goal_bridge'         2>/dev/null; sleep 0.5
+    for pat in 'phone_teleop.py' 'slam_toolbox' 'ldlidar' 'chassis_node' 'odom_rec.py' \
+               'nav2.launch.py' 'lib/nav2_' 'nav2_goal_bridge'; do
         if pgrep -f "$pat" >/dev/null; then
             say "强制结束残留：$pat"
             pkill -9 -f "$pat" 2>/dev/null
         fi
     done
     say "已全部停止。"
+    # ⚠ Fast DDS 共享内存段残留（实测累积 134 个）会让节点间"看得见话题、收不到数据"
+    #   ——典型症状：网页设目标车不动、/goal_pose 有订阅者但回调不触发。每次停机清一次。
+    rm -f /dev/shm/fastrtps_* 2>/dev/null
+    # ~/.ros/log 是各节点的底层 stdout 日志（每次 launch 生成上千个小文件），
+    # 排查看 /tmp/bringup.log、/tmp/nav2.log 就够——停机时一并清掉，防越积越多。
+    rm -rf /home/toybrick/.ros/log/* 2>/dev/null
+    say "已清理 fastrtps 共享内存与 ~/.ros 日志。"
 }
 
 # ---------------- 预检查 ----------------
@@ -74,13 +87,15 @@ precheck() {
 MODE="mapping"
 DRY=0
 NAV=0
+NAV2=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --stop)     stop_all; exit 0 ;;
         --mode)     MODE="${2:-mapping}"; shift 2 ;;
         --nav)      NAV=1; shift ;;
+        --nav2)     NAV2=1; shift ;;
         --dry-run)  DRY=1; shift ;;
-        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --dry-run / --stop）"; exit 2 ;;
+        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --nav2 / --dry-run / --stop）"; exit 2 ;;
     esac
 done
 case "$MODE" in
@@ -91,6 +106,9 @@ esac
 say "=== 预检查（mode=$MODE）==="
 precheck || { fail "预检查未通过，未启动。"; exit 1; }
 ok "预检查通过"
+
+# 启动前也清一次 shm 残留（防止上次异常退出留下的损坏段把 DDS 搞坏）
+rm -f /dev/shm/fastrtps_* 2>/dev/null
 
 if [ "$DRY" = "1" ]; then
     say "（--dry-run：只做预检查，不启动；真正启动去掉 --dry-run 即可）"
@@ -112,10 +130,32 @@ if ! ros2 pkg prefix robot_bringup >/dev/null 2>&1; then
     exit 1
 fi
 
+# 实时位姿/速度记录 → /tmp/rec_live.log（每秒一条；errexp 与诊断都读它）
+# ⚠ 必须在 source 之后拉起（rec 依赖 rclpy）——P25 教训：放在 source 前会 import 失败静默退出
+if pgrep -f 'odom_rec.py' >/dev/null; then pkill -9 -f 'odom_rec.py'; sleep 0.3; fi
+nohup python3 "$HOME/RobotCode/01_Project/03_SLAM/odom_rec.py" >/dev/null 2>&1 &
+disown 2>/dev/null || true
+say "位姿记录已开：tail -f /tmp/rec_live.log"
+
+# P33：launch 输出实时落盘（tee → /tmp/nav2_live.log）——打转主体/recovery 判定
+#   需要 nav2 日志，不能只靠用户终端滚动缓冲。SIGINT 发给前台进程组，
+#   ros2 launch 与 tee 同时收到，Ctrl-C 行为不变（shell 留守等管道结束，无副作用）。
 if [ "$NAV" = "1" ]; then
     [ "$MODE" = "localization" ] || say "提示：--nav 通常与 --mode localization 一起用（当前 mode=$MODE）"
     say "启动中 ...（含导航监听：手机点地图即出发、可连续点；Ctrl-C 停止全部）"
-    exec ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav:=true
+    say "日志落盘：tail -f /tmp/nav2_live.log"
+    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav:=true 2>&1 | tee /tmp/nav2_live.log
+    exit 0
+fi
+
+# nav2 全栈（--nav2）：手机点地图 → /goal_pose → nav2_goal_bridge → navigate_to_pose
+if [ "$NAV2" = "1" ]; then
+    [ "$MODE" = "localization" ] || say "提示：--nav2 通常与 --mode localization 一起用（当前 mode=$MODE）"
+    say "启动中 ...（nav2 全栈 + 手机点地图即出发；Ctrl-C 停止全部）"
+    say "日志落盘：tail -f /tmp/nav2_live.log"
+    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav2:=true 2>&1 | tee /tmp/nav2_live.log
+    exit 0
 fi
 say "启动中 ...（Ctrl-C 停止全部）"
-exec ros2 launch robot_bringup bringup.launch.py mode:="$MODE"
+say "日志落盘：tail -f /tmp/nav2_live.log"
+ros2 launch robot_bringup bringup.launch.py mode:="$MODE" 2>&1 | tee /tmp/nav2_live.log

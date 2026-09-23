@@ -1,0 +1,614 @@
+# ============================================================
+# nav2 参数（本机口径：Toybrick RK3588 + LD14P + 麦轮底盘）
+#
+# 基线：/opt/ros/humble/share/nav2_bringup/params/nav2_params.yaml（Turtlebot3 口径）
+# 已按本机改（对照《08_nav2_自主导航方案.md》§4）：
+#   · use_sim_time: False（真机）
+#   · robot_radius 0.22→0.15（车半宽 0.12 + 余量）
+#   · inflation_radius 0.55→0.15（对齐自研 --inflation 0.15 硬约束）
+#   · cost_scaling_factor 3.0→8.0（nav2 版"走宽处"，对齐自研 --prefer-open）
+#   · 控制器 DWB→RPP（与自研纯跟踪同族，lookahead 0.4 = 自研 L_d）
+#   · 规划器 Navfn→SmacPlanner2D；allow_unknown: false（未知不可通行，与自研同口径）
+#   · 到位判据 0.25→0.15 m / 0.25→0.175 rad（对齐自研 0.15 m ±10°）
+#   · 速度 0.26→0.15 m/s（自研限速）
+#   · 频率下调：controller 20→10、planner 20→1（6Hz 雷达 + RK3588 省算力）
+#
+# ⚠ 定位走 slam_toolbox localization（自带 /map 与 map→odom），
+#   所以本文件里的 amcl / map_server 段默认不启用（切换路线时才用）。
+# ============================================================
+
+# ---------------- amcl（备选路线；走 slam_toolbox 时不启用） ----------------
+amcl:
+  ros__parameters:
+    use_sim_time: False
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    base_frame_id: "base_link"          # 本机没有 base_footprint
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+    do_beamskip: false
+    global_frame_id: "map"
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 100.0
+    laser_min_range: -1.0
+    laser_model_type: "likelihood_field"
+    max_beams: 60
+    max_particles: 2000
+    min_particles: 500
+    odom_frame_id: "odom"
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 1
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"   # 必选差速（/odom 是差速积分）
+    save_pose_rate: 0.5
+    sigma_hit: 0.2
+    tf_broadcast: true
+    transform_tolerance: 1.0
+    update_min_a: 0.2
+    update_min_d: 0.25
+    z_hit: 0.5
+    z_max: 0.05
+    z_rand: 0.5
+    z_short: 0.05
+    scan_topic: scan
+
+# ---------------- 行为树导航器 ----------------
+bt_navigator:
+  ros__parameters:
+    use_sim_time: False
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    # 默认行为树：带重新规划 + 恢复（挡路 → 等待/自旋/清除代价地图/后退）
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_smooth_path_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_assisted_teleop_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_drive_on_heading_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_truncate_path_local_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+      - nav2_single_trigger_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_is_battery_low_condition_bt_node
+      - nav2_navigate_through_poses_action_bt_node
+      - nav2_navigate_to_pose_action_bt_node
+      - nav2_remove_passed_goals_action_bt_node
+      - nav2_planner_selector_bt_node
+      - nav2_controller_selector_bt_node
+      - nav2_goal_checker_selector_bt_node
+      - nav2_controller_cancel_bt_node
+      - nav2_path_longer_on_approach_bt_node
+      - nav2_wait_cancel_bt_node
+      - nav2_spin_cancel_bt_node
+      - nav2_back_up_cancel_bt_node
+      - nav2_assisted_teleop_cancel_bt_node
+      - nav2_drive_on_heading_cancel_bt_node
+      - nav2_is_battery_charging_condition_bt_node
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: False
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    use_sim_time: False
+
+# ---------------- 控制器：RPP（与自研纯跟踪同族） ----------------
+controller_server:
+  ros__parameters:
+    use_sim_time: False
+    # ⚠ P15：10Hz 实测跑不动（"Control loop missed its desired rate" 刷屏，指令断流
+    #   触发底盘 0.5s 看门狗反复停车）。4Hz = 周期 0.25s，仍远快于底盘 0.5s 看门狗，
+    #   且 CPU 富余后控制循环才能稳定跟上 —— 连续指令比高频断续指令快得多。
+    controller_frequency: 4.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5       # 不做横移（差速里程计不可信）
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    # P18：双控制器并存。FollowPath=MPPI（默认，绕障更顺）；FollowPathDWB=原 RotationShim+DWB
+    # （P11~P17 调参成果完整保留）。BT 默认用 FollowPath；要回退 DWB 时把两个键名互换即可。
+    controller_plugins: ["FollowPath", "FollowPathDWB"]
+
+    progress_checker:
+      # ⚠⚠ P8 实测：SimpleProgressChecker **只看位置、不看转角** → 车原地掉头时（目标在后方，
+      #   差速底盘 min_vel_x=0 不能倒车，只能转身）位置不变 → 15 秒后被判 "Failed to make
+      #   progress" 中止（实测 2.01,-0.15 处转了 20+ 秒、v=(0.0, 0.076)，位置纹丝不动）。
+      #   PoseProgressChecker 把**转角**也算作进步，掉头不再被误杀。
+      plugin: "nav2_controller::PoseProgressChecker"
+      required_movement_radius: 0.5
+      required_movement_angle: 0.5      # 转过 0.5 rad（≈29°）也算进步
+      # P20：15→25s。窄口前 MPPI 需要"对准 + 直插"的机动时间；15s 一到就 fail 会被
+      #   recovery 打断尝试，车永远完不成插入动作。0.2 m/s 下 0.5 m 也需要 2.5s+，25s 合理。
+      movement_time_allowance: 25.0
+
+    # 到位判据：对齐自研（0.15 m / ±10°）
+    # ⚠ P22：手机网页设目标朝向恒为 yaw=0，回程时车头朝向≈180° —— 原判据要求最后
+    #   原地转 180° 才算"到达"，在障碍环绕的终点前必然磨死。放宽为"位置到位即可"，
+    #   朝向 ±29° 内都算到（用户点目标只关心位置）。
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.20
+      yaw_goal_tolerance: 0.50          # ≈±29°（原 10°）
+
+    # ⚠ 切换 DWB（原 RPP）：RPP 是"纯路径跟随"，只有贴障碍降速，**没有绕障能力**——
+    #   纸箱挡路时它只会沿着全局路径撞过去，然后被 collision_monitor 拦停 / progress 失败。
+    #   DWB 对一堆候选轨迹打分，其中 BaseObstacleCritic 用 local_costmap 的**实时雷达**
+    #   数据，能自己挑一条绕开的路。参数按本机口径配：0.15 m/s 慢速 + 差速底盘（不横移）。
+    # ================================================================
+    # FollowPath = MPPI（P18 默认控制器）
+    #   为什么换：DWB 是"采样→打分→挑最低分"，高速轨迹前瞻长、更容易扫到致命格被否决
+    #   → 贴障时只剩慢轨迹可挑（实测反复 Failed to make progress，spin/backup 都只是挣扎）。
+    #   MPPI 每周期采样数百条噪声轨迹做温度加权优化，critics 软硬结合（repulsion 软排斥 +
+    #   critical 硬罚），绕行解是"连续优化"出来的，不存在 DWB 的"合法轨迹荒"。
+    #   本机口径：4Hz、DiffDrive（不横移）、v≤0.20、ω≤0.80（底盘死区 0.15）。
+    # ================================================================
+    FollowPath:
+      # P29：shim 恢复（P21 参数）。复盘：P25 重开死区 critic 引入蛇行，P26/P27/P28
+      #   在控制层绕（smoother/wz_std/repulsion/去 shim）越调越差；蛇行的根因是
+      #   "解滑进底盘 ω 死区 + 死区 critic 强推大 ω"的组合。P29 在 base_driver 做
+      #   死区补偿后，上层的死区 critic 不再需要（恢复 P19 关闭态），shim 恢复原参数。
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "nav2_mppi_controller::MPPIController"
+      angular_dist_threshold: 0.785           # 偏差 >45° 先原地转正
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 0.8      # 远高于底盘死区 0.15
+      max_angular_accel: 2.0
+      simulate_ahead_time: 1.0
+      time_steps: 12
+      model_dt: 0.25                    # ⚠ 必须 ≥ 控制周期(4Hz→0.25s)，否则 configure 直接报错
+                                        #   12 × 0.25 = 3.0 s 前瞻
+      batch_size: 300                   # 4Hz 弱 CPU：300×16=4800 评估点，可控
+      iteration_count: 1
+      vx_std: 0.2
+      vy_std: 0.0                       # 差速不横移
+      wz_std: 0.25                      # P29 回退：0.15→0.25（P20 口径；P26 收紧是为压蛇行，已随死区补偿回退）
+      vx_max: 0.20                      # P17 口径
+      vx_min: -0.20
+      vy_max: 0.0
+      wz_max: 0.80                      # 与 DWB max_vel_theta 对齐
+      temperature: 0.2                  # P20：0.3→0.2，收敛更确定（少试探、敢直插窄口）
+      gamma: 0.015
+      motion_model: "DiffDrive"
+      visualize: False
+      reset_period: 1.0
+      regenerate_noises: False          # P19：True 会让每周期噪声重抽、最优解跳变 → 车头摆动；
+                                        #   False 保持噪声序列跨周期连续，输出平滑得多
+      transform_tolerance: 0.2
+      prune_distance: 2.0
+      TrajectoryVisualizer:
+        trajectory_step: 10
+        time_step: 3
+      critics: ["ConstraintCritic", "ObstaclesCritic", "GoalCritic", "GoalAngleCritic",
+                "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic",
+                "VelocityDeadbandCritic"]
+      ConstraintCritic.enabled: True
+      ConstraintCritic.cost_weight: 4.0
+      # 碰撞判据按车体轮廓（对应 DWB 的 ObstacleFootprintCritic）+ 软排斥提前绕行
+      ObstaclesCritic.enabled: True
+      # P20：repulsion 1.5→0.7、margin 0.1→0.05。窄口前"两侧对称排斥互相抵消、贴边轨迹
+      #   全被重罚"→ 徘徊不敢进。放宽后车敢沿中线贴近通过；防撞仍由 critical_cost + monitor 兜底。
+      ObstaclesCritic.repulsion_weight: 0.7   # P29 回退：0.4→0.7（P20 口径；0.4 是 P26 压蛇行的，随补偿回退）
+      ObstaclesCritic.critical_cost: 300.0
+      ObstaclesCritic.consider_footprint: True
+      ObstaclesCritic.collision_margin_distance: 0.05
+      ObstaclesCritic.near_goal_distance: 0.5
+      GoalCritic.enabled: True
+      GoalCritic.cost_weight: 5.0
+      GoalCritic.threshold_to_consider: 0.5
+      GoalAngleCritic.enabled: True
+      # P22：weight 3→1.5、threshold 0.5→0.25。原配置在终点前 0.5 m 就开始死拉朝向，
+      #   与周围障碍排斥对撞 → 磨成 0.01 m/s。现在"先到位、最后再小幅对准"。
+      GoalAngleCritic.cost_weight: 1.5
+      GoalAngleCritic.threshold_to_consider: 0.25
+      PathAlignCritic.enabled: True
+      PathAlignCritic.cost_weight: 14.0
+      PathAlignCritic.max_path_occupancy_ratio: 2.0
+      PathAlignCritic.trajectory_point_step: 3
+      PathAlignCritic.threshold_to_consider: 0.5
+      PathAlignCritic.offset_from_furthest: 20
+      PathFollowCritic.enabled: True
+      PathFollowCritic.cost_weight: 5.0
+      PathFollowCritic.offset_from_furthest: 5
+      PathFollowCritic.threshold_to_consider: 1.4
+      PathAngleCritic.enabled: True
+      PathAngleCritic.cost_weight: 1.0  # P19：2→1。窄道里它把车头钉在路径切线上，与两侧
+                                        #   ObstaclesCritic 排斥力来回拉扯 → 摆头；降权放宽
+      PathAngleCritic.threshold_to_consider: 0.5
+      PathAngleCritic.max_angle_to_furthest: 1.0
+      PreferForwardCritic.enabled: True
+      PreferForwardCritic.cost_weight: 2.0   # P21：5→2，差速车允许"先转身再走"，少罚倒退/原地转
+      PreferForwardCritic.threshold_to_consider: 0.5
+      # P19 关闭；P25 重开、P29 再次关闭（最终态）。复盘：死区 critic 是蛇形摆头的
+      #   引入点（P25 重开当晚出现蛇行）——它强推"要么 0 要么 >0.17"的 ω，与
+      #   PathAlign 的中线拉力来回切换 → S 形。P29 已在 base_driver 做 ω 死区补偿，
+      #   上层不再需要感知死区。磨蹭由补偿解决（0.067 → 0.18 可执行）。
+      VelocityDeadbandCritic.enabled: False
+      VelocityDeadbandCritic.cost_weight: 20.0
+      VelocityDeadbandCritic.deadband_velocities: [0.04, 0.0, 0.17]
+
+    # ============ 以下整套 DWB 保留为备用（FollowPathDWB），未启用 ============
+    FollowPathDWB:
+      #   远低于底盘死区 0.15 → 车原地一动不动、yaw 40 秒只变 5°），根因是它的 PathAlign/PathDist
+      #   打分偏好"轨迹终点对齐路径方向"，**转角越小得分反而越高** → 陷入"想转又不转"的僵局。
+      #   RotationShimController 是 nav2 给差速底盘的官方解法：包一层主控制器，当目标方向与车头
+      #   夹角 > angular_dist_threshold 时**先用固定角速度原地转正**，转好了再交给 DWB 跟路径。
+      #   固定 0.8 rad/s 远高于死区，掉头不再落空。
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.785           # 偏差 >45° 先原地转正
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 0.8      # 远高于底盘死区 0.15
+      max_angular_accel: 2.0
+      simulate_ahead_time: 1.0
+      # ---- 以下为 DWB（primary_controller）参数，shim 会转发 ----
+      # ---- 速度/加速度：对齐自研（直线 0.15，转弯 0.08~0.10）----
+      min_vel_x: 0.0
+      # P17：0.15 → 0.20。贴障时高速轨迹前瞻长、更容易被 ObstacleFootprint 否决，
+      # DWB 只能在剩下的慢轨迹里挑（实测 15s 挪 0.5m）。抬高上限给"较快的绕行轨迹"
+      # 留空间；配合 PolygonSlow 收窄，0.3 m 外不再被磨速。
+      max_vel_x: 0.20
+      min_vel_y: 0.0
+      max_vel_y: 0.0            # 差速底盘，不做横移
+      # ⚠⚠⚠ P9 实测：**底盘角速度有硬件死区**！直接测底盘（绕过 nav2）：
+      #     ω=0.05/0.08/0.10/0.13 → 实际转角 **0.00°**（完全不响应）
+      #     ω=0.16 → 9.6°，ω=0.20 → 17.5°，ω=0.25 → 23.7°（过了死区才动，且只有理论值 53~83%）
+      #   死区边界 ≈ **0.15 rad/s**。
+      #   DWB 原本 max=0.40，经 collision_monitor 减速 40% → 输出 0.076 → 落进死区被底盘无视，
+      #   nav2 以为在掉头、车纹丝不动 → 15 秒后 Failed to make progress（实测转了 40 秒 yaw 仅动 5°）。
+      #   提到 0.80：即使被减速 60% 仍有 0.32 可用，远高于死区。
+      max_vel_theta: 0.80
+      min_speed_xy: 0.0
+      max_speed_xy: 0.15
+      min_speed_theta: 0.0
+      acc_lim_x: 0.5
+      acc_lim_y: 0.0
+      acc_lim_theta: 1.0        # 与 RPP 的 max_angular_accel 一致
+      decel_lim_x: -0.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -1.0
+      # ---- 轨迹采样 ----
+      # P15：20×20=400 条轨迹 × footprint 逐点检查，板子跑不动 10Hz → 指令断流。
+      # 12×12=144 条，CPU 降 64%；配合 controller 4Hz，控制循环能稳定跟上。
+      vx_samples: 12
+      vy_samples: 0             # 差速，横向不采样
+      vtheta_samples: 12
+      # 1.5 → 2.0（P14/P15 折中）：贴障时前瞻越长越敢转向；但太长叠加低采样率会更吃 CPU。
+      sim_time: 2.0
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.15   # 与 general_goal_checker 对齐
+      yaw_goal_tolerance: 0.175 # ≈10°
+      trans_stopped_velocity: 0.05
+      short_circuit_trajectory_evaluation: True   # 撞障碍的轨迹直接淘汰，省算力
+      stateful: True
+      # ---- 打分器（权重沿用 nav2 官方默认量级）----
+      # ⚠⚠ P6 实测：BaseObstacleCritic 只看**车中心一个点**的代价，管不住"车体擦着箱子过"。
+      #   车陷进箱子膨胀区后，越慢踩到的格子越少 → 分数越低 → DWB 宁可把速度磨到 0.022 m/s
+      #   原地蹭，也不肯绕（实测 4.00,-0.19 处磨了 20 秒，最后 Failed to make progress，
+      #   而且全程**没有** PolygonStop —— 不是安全层拦的，是 DWB 自己不愿走）。
+      #   ObstacleFootprintCritic 用**车体轮廓**逐点检查轨迹，只要车身碰到障碍该轨迹直接判无效
+      #   → 蹭不过去，只能绕。
+      # ⚠⚠⚠ P12 实测：把 BaseObstacleCritic 权重提到 1.0 后，车**反而在更远处(0.82m)就"磨速度"**
+      #   （0.039→0.016→0，20 秒不走也不绕、且无 PolygonStop）。根因：该 critic 取**轨迹上的最大
+      #   代价**，而**轨迹越长越容易踩进膨胀区** → **慢速轨迹天然更便宜** → 车越慢越"安全"，
+      #   最后宁可停下。这是它的固有缺陷（P6 的"慢慢蹭"是同一坑的另一面）。
+      #   → 只用 ObstacleFootprintCritic（只判有效性、不打分），决策空间改由**削小 monitor 急停区**换来。
+      critics: ["RotateToGoalCritic", "OscillationCritic", "ObstacleFootprintCritic",
+                "GoalAlignCritic", "PathAlignCritic", "PathDistCritic", "GoalDistCritic"]
+      # ⚠⚠ P5 实测：0.02（nav2 官方默认）在本场景**太弱**，车宁可贴着箱子走也不绕。
+      #   打分天平（DWB 取总分最低的轨迹）：
+      #     贴障碍直走 = cost100 × 0.02 = 2 分（PathAlign 不失分）
+      #     横向绕开   = 0 分避障，但偏离路径 0.4m × PathAlign 32 = 12.8 分
+      #   → 总分 2 < 12.8，DWB 选"贴箱子走" → 到 0.42m 被 collision_monitor 急停 → 卡死。
+      #   0.20 后：贴障碍 = 20 分 > 绕行 12.8 分 → 才会主动绕。
+      # ⚠⚠⚠ P10 实测（两个 critic 必须配合才成立）：
+      #   ObstacleFootprintCritic 只在「车体轮廓碰到 inscribed 区」时才否决轨迹，而该边界
+      #   （车体 0.12 + 内切 0.12 ≈ 0.24m）**比 monitor 的急停边界(0.28m)更靠内** → DWB 还没
+      #   等到"直行不可行"的判定，车已被安全层按停（实测 2.16,-0.19，距箱 0.29m）。
+      #   所以必须让 DWB **主动想绕**：BaseObstacleCritic 取**最大代价**打分、权重 1.0：
+      #     贴障碍直行 ≈ 80 分   ＞   绕行 ≈ 30 + PathAlign 12.8 ≈ 43 分
+      #   sum_scores 必须 false（累加会让"慢慢蹭"因踩的格子少而变便宜 —— 就是 P6 那个坑）。
+      #   分工：BaseObstacle 负责"引导避让"，ObstacleFootprint 负责"兜底否决碰撞"。
+      ObstacleFootprintCritic.scale: 0.20
+      # P14：32→20 / 前瞻 0.5→0.25。贴障时 PathAlign 对"转向绕行"惩罚过重，
+      # DWB 宁可给 ω=0.126 慢慢蹭（< 死区 0.15 = 原地僵死）。前瞻缩短后，
+      # 转向轨迹的"路径偏差"罚得更少，DWB 才敢用大 ω 快速转出死区。
+      PathAlignCritic.scale: 20.0
+      PathAlignCritic.forward_point_distance: 0.25
+      PathDistCritic.scale: 24.0
+      GoalAlignCritic.scale: 24.0
+      GoalAlignCritic.forward_point_distance: 0.5
+      GoalDistCritic.scale: 24.0
+      RotateToGoalCritic.scale: 32.0
+      RotateToGoalCritic.slowing_factor: 5.0
+      RotateToGoalCritic.lookahead_time: 1.5
+      OscillationCritic.scale: 5.0
+      # P16：0.05 → 0.15。BT recovery（spin/backup）之后若立刻锁死转向方向，
+      # DWB 会顶着被锁方向继续磨 → Failed to make progress 循环。放宽重置距离。
+      OscillationCritic.oscillation_reset_dist: 0.15
+
+# ---------------- 局部代价地图（滚动窗口，只用雷达） ----------------
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 3.0             # P15：5→3，给控制循环让 CPU（雷达才 6Hz，3Hz 更新足够）
+      publish_frequency: 1.0
+      global_frame: odom
+      robot_base_frame: base_link
+      use_sim_time: False
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.05                  # 与地图一致
+      robot_radius: 0.12                # 车半宽（与自研一致；膨胀 0.15 = 0.12 + 0.03 余量）
+      # P18：MPPI ObstaclesCritic.consider_footprint=True 需要**多边形 footprint**（圆形
+      #   robot_radius 会被拒："no robot footprint provided"）。矩形略放余量：0.26 × 0.20 m。
+      footprint: "[[0.13, 0.10], [0.13, -0.10], [-0.13, -0.10], [-0.13, 0.10]]"
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          # ⚠⚠ P4 根因：source 级 max_obstacle_height 的 nav2 默认值是 **0.0**（不是 2.0！）。
+          #   雷达点变换到 odom 后 z≈0.30 m（雷达安装高度）→ 0.3 > 0.0 → 每个点都被当"超高"
+          #   扔掉 → obstacle_layer 一帧都标不进去 → 局部代价图恒为全 0 → DWB 看不见任何动态
+          #   障碍、只会直着走，撞到跟前才被 collision_monitor 拦停（表现为"不会绕障"）。
+          #   症状极具迷惑性：订阅正常、TF 正常、时间戳正常、message filter 0 丢弃、图在刷新。
+          max_obstacle_height: 2.0
+          raytrace_max_range: 4.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 4.0
+          obstacle_min_range: 0.0
+          # LD14P 只有 ~6Hz：保留上一帧观测，避免障碍在帧间"闪烁消失"
+          observation_persistence: 0.3
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # ⚠ P1 实测：nav2 的膨胀是**软代价**，安全距离 = 膨胀曲线衰减到"致命线"的距离，
+        #   而致命线是固定阈值（实测路径代价上限 87 ≈ 100 那条线），调 lethal_cost_threshold
+        #   和 cost_travel_multiplier 都**不改变**它（三次实测路径一模一样）。
+        #   唯一有效的是衰减率：253·e^(-csf·d) = 100 → d* = ln(2.53)/csf
+        #     csf=8.0 → d*=0.116 m（< 车半宽 0.12 ✗，实测路径离墙 0.110 m）
+        #     csf=6.0 → d*=0.155 m（≈ 自研硬膨胀 0.15 ✓）
+        # ⚠ P3 实测死锁：inflation_radius 必须 **≥ collision_monitor 的 PolygonStop 距离(0.45 m)**。
+        #   原来 0.16 是沿用自研口径（自研停止线就在 0.15 m，够用），但 nav2 的 monitor 在
+        #   0.45 m 就拦停 → DWB 在代价图里要到 0.16 m 才感受得到代价，等于"看不见" 0.45 m 处的
+        #   障碍，直挺挺走过去被 monitor 按停 → stop 强制零速 → 绕行动作无法执行 → 死锁到
+        #   Failed to make progress 超时。
+        #   注意：这里放大的是**软代价**范围（只让 DWB 提前偏向绕开），致命线仍由
+        #   cost_scaling_factor 决定（csf=6 → d*≈0.155 m），所以窄通道**不会**被堵死。
+        # ⚠ P14：6.0 → 4.0。贴障死锁链实测：DWB 想转 ω=-0.126，经 smoother(×0.4)→
+        #   PolygonSlow(×0.6) 只剩 -0.03 < 底盘死区 0.15 → 僵死。csf=4 后局部不可通行线
+        #   0.232 m > PolygonStop 0.20 m：DWB 在 monitor 兜底**之前**就被迫判"直行非法"。
+        # ⚠ P16：补 lethal_cost_threshold=104 → 不可通行线与全局图一致（ln(252/104)/4=0.221 m）。
+        #   两图口径一致，车绕行停驻点才不会"局部说能走、全局说没路"。
+        cost_scaling_factor: 4.0
+        lethal_cost_threshold: 104
+        # 0.16 → 0.50 → 0.70：只比 monitor 的 0.45 m 停车区大 0.05 m 时，DWB 刚"看见"箱子
+        # 就被急停按死了（0.42 m 处实测）。0.70 留出 0.25 m 反应距离，它才来得及绕。
+        inflation_radius: 0.70
+      always_send_full_costmap: True
+
+# ---------------- 全局代价地图（静态图 + 膨胀） ----------------
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      use_sim_time: False
+      robot_radius: 0.12                # 车半宽（同上；必须 < inflation_radius，否则 costmap 报错）
+      resolution: 0.05
+      track_unknown_space: true
+      unknown_cost_value: 255           # 未知 = 致命（与自研"未知不可通行"同口径）
+      # ⚠ P1 实测推导：nav2 的膨胀是**软代价**，真正的"不可通行线"由这个阈值决定：
+      #    不可通行线 d* = ln(252 / lethal_cost_threshold) / cost_scaling_factor
+      # ⚠⚠ P16 实测死结：csf=3.0 + thr=76 → d*=0.40 m。车绕行后停在离障 0.3~0.4 m 处，
+      #    **车中心所在格就是致命格** → SmacPlanner "no valid path found" → BT 无限
+      #    spin/wait/backup（车明明有路可走）。不可通行线必须收到车绕行停得住的位置：
+      #    thr=130 + csf=3.0 → d* = ln(252/130)/3 = 0.221 m（> PolygonStop 0.20 ✓）。
+      #    软引导坡度不变，路径仍倾向绕远，只是"车站得住"。
+      #  副作用未知区(255)仍 ≥130 → 未知依旧不可通行 ✓
+      lethal_cost_threshold: 130
+      # ⚠⚠ P13 实测根因：原来只有 static_layer + inflation_layer —— **纸箱（动态障碍）根本不在
+      #   全局图里**！全局路径永远是一条穿箱直线，DWB 被 PathAlign(32)/PathDist(32) 死死拉回
+      #   这条线，局部再怎么调也只能"贴着箱子蹭"，到 0.2~0.3 m 处磨到 0.019 m/s 卡死
+      #   （实测 2.19,-0.08，yaw 卡在 58.7°）。
+      #   → 全局图必须也吃 /scan，并且膨胀半径放大到 0.70（同局部图），让**全局路径本身就绕开
+      #   箱子**；DWB 只需跟随绕行路径，不必在贴身距离里做"撞 vs 绕"的取舍。
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True   # slam_toolbox 1Hz 重发 /map，只接一次
+        # ⚠ P1 实测：这个参数必须写在**插件块里**（写在 global_costmap 顶层不生效）。
+        #   默认（不写）时墙会被写成 cost=100（occupancy 原值），而 InflationLayer 只把
+        #   254 当膨胀源 → **膨胀完全不生效** → 规划器贴墙走（实测离真实障碍仅 0.110 m）。
+        #   trinary 映射后：墙 100→254，膨胀正常，路径才有安全余量。
+        trinary_costmap: True
+      # ---- 动态障碍层（P13 新增）：纸箱不在 pgm 静态图里，只有 /scan 看得见 ----
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        # 全局图每 1 s 更新一次，LD14P 只有 ~6 Hz → 观测保留 0.5 s，避免帧间闪烁
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          # 同局部图 P4：不写这行 nav2 默认 0.0，会把 z≈0.30 m 的雷达点全滤掉
+          max_obstacle_height: 2.0
+          raytrace_max_range: 4.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 4.0
+          obstacle_min_range: 0.0
+          observation_persistence: 0.5
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # ⚠ P13：全局图的"致命半径"= ln(253 / lethal_cost_threshold) / cost_scaling_factor
+        #   = ln(253/76)/csf = 1.203/csf。它决定**全局路径离障碍多远**：
+        #     csf=6.0 → 0.20 m  ✗ 比 collision_monitor 的 0.28 m 急停线还近 → 路径贴箱 → 必被按停
+        #     csf=3.0 → 0.40 m  ✓ 留出 0.12 m 余量，全局路径本身就走在急停线之外
+        #   局部图仍用 6.0（贴身距离里要更精细），两者分工不冲突。
+        cost_scaling_factor: 3.0
+        # 0.16 → 0.70：与局部图同口径，保证 0.40 m 致命半径有足够衰减空间。
+        inflation_radius: 0.70
+      always_send_full_costmap: True
+
+# ---------------- 地图服务（走 slam_toolbox 时不启用） ----------------
+map_server:
+  ros__parameters:
+    use_sim_time: False
+    yaml_filename: ""
+
+map_saver:
+  ros__parameters:
+    use_sim_time: False
+    save_map_timeout: 5.0
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.65
+    map_subscribe_transient_local: True
+
+# ---------------- 规划器：SmacPlanner2D（8 邻域 A*，最接近自研） ----------------
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 1.0
+    use_sim_time: False
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      tolerance: 0.15
+      downsample_costmap: false         # 图只有 12.6×15 m，不降采样更准
+      downsampling_factor: 1
+      allow_unknown: false              # 未知不可通行（与自研同口径）
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0
+      cost_travel_multiplier: 8.0       # 绕开高代价（离墙近）区域的权重
+                                        # ⚠ P1 实测：nav2 的膨胀是**软代价**（可穿越，只是代价高），
+                                        #   而自研是**硬约束**（膨胀区直接不可通行）。
+                                        #   默认 1.0~2.0 时 nav2 会抄近路贴墙走，实测离真实障碍只有
+                                        #   0.110 m < 车半宽 0.12 m（自研同场景 0.180 m ✓）。
+                                        #   调到 8.0 把"穿膨胀区"变得不划算，才能拉齐自研口径。
+                                        #   ⚠ 该参数在**构建代价图时**生效，运行时 ros2 param set 无效，要重启 planner。
+      # P33：P22 欠账（false → true）。长跑 G4 异常窗口（245~268s：13s 停滞 + 11s 打转）的
+      #   诱因之一是"网页目标朝向恒 0°"——车到了位置还要硬对准 0°，在障碍邻近处反复调整。
+      #   开启后路径终点朝向 = 接近方向切线（"顺着路到"即到位），与 P22 的 yaw ±29° 容差、
+      #   GoalAngle 后置一起，把"朝向对准"从硬需求降为软引导。
+      use_final_approach_orientation: true
+
+# ---------------- 路径平滑（对应自研 Chaikin 拐角平滑） ----------------
+smoother_server:
+  ros__parameters:
+    use_sim_time: False
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 0.05                   # 允许偏离原路径 5 cm 做圆滑
+      max_its: 1000
+      do_refinement: True
+      w_data: 0.2
+      w_smooth: 0.3
+
+# ---------------- 恢复行为（挡路时用） ----------------
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.1
+    use_sim_time: False
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.4             # 慢速（默认 1.0 太快）
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 1.0
+
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: False
+
+# ---------------- 多航点巡检（自研没有的能力） ----------------
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: False
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200
+
+# ---------------- 速度平滑（nav2 → cmd_vel_nav） ----------------
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: False
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.20, 0.0, 0.8]     # P17：v 0.15→0.20 与 DWB max_vel_x 对齐；ω 0.8 转向不受截顶
+    min_velocity: [-0.20, 0.0, -0.8]
+    # P29 回退到 P17 值（accel 3.0 / decel −1.0）：P26 的 1.5/−3.0 是压蛇行的，
+    #   蛇行随死区补偿回退。死区已在底盘层补偿，转向不再需要"快抬快收"来对抗。
+    max_accel: [0.5, 0.0, 3.0]
+    max_decel: [-0.5, 0.0, -1.0]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0              # 1s 收不到 nav2 指令就停（底盘看门狗 0.5s）

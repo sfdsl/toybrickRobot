@@ -1,0 +1,8 @@
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/./rknn_yolov5_cam
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/lib/librknnrt.so
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/./model/coco_80_labels_list.txt
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/model/best-bug.rknn
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/model/yolov5.rknn
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/model/bug_labels_list.txt
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/lib/librknnrt.so
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/install/rk3588_linux_aarch64/rknn_yolov5_cam/lib/librga.so

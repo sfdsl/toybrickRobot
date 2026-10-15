@@ -1,0 +1,6 @@
+/userdata/aidemo/rk3588-atk-yolov11-2026/yolo11/cpp/install/rk3588_linux_aarch64/atk_rknn_yolo11_cam/./rknn_yolo11_cam
+/userdata/aidemo/rk3588-atk-yolov11-2026/yolo11/cpp/install/rk3588_linux_aarch64/atk_rknn_yolo11_cam/lib/librknnrt.so
+/userdata/aidemo/rk3588-atk-yolov11-2026/yolo11/cpp/install/rk3588_linux_aarch64/atk_rknn_yolo11_cam/model/coco_80_labels_list.txt
+/userdata/aidemo/rk3588-atk-yolov11-2026/yolo11/cpp/install/rk3588_linux_aarch64/atk_rknn_yolo11_cam/model/yolo11.rknn
+/userdata/aidemo/rk3588-atk-yolov11-2026/yolo11/cpp/install/rk3588_linux_aarch64/atk_rknn_yolo11_cam/lib/librknnrt.so
+/userdata/aidemo/rk3588-atk-yolov11-2026/yolo11/cpp/install/rk3588_linux_aarch64/atk_rknn_yolo11_cam/lib/librga.so

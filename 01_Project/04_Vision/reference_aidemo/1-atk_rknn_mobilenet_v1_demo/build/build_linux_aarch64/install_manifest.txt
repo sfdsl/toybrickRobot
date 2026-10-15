@@ -1,0 +1,3 @@
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/install/atk_mobilenet_v1_demo/./atk_mobilenet_v1
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/install/atk_mobilenet_v1_demo/.//model/mobilenet_v1_1.0_224_3588.rknn
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/install/atk_mobilenet_v1_demo/.//model/mobilenet_v1_1.0_224.rknn

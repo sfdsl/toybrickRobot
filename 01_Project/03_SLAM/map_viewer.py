@@ -53,9 +53,15 @@ class MapViewer(Node):
     def on_map(self, msg):
         self.map_msg = msg
 
-    def robot_pose(self):
-        """返回 (x, y, yaw)；TF 不可用时返回 None"""
+    def robot_pose(self, max_age=None):
+        """返回 (x, y, yaw)；可选拒绝过期的定位 TF。"""
         try:
+            if max_age is not None:
+                localization = self.buf.lookup_transform("map", "odom", Time())
+                age = (self.get_clock().now() - Time.from_msg(
+                    localization.header.stamp)).nanoseconds / 1e9
+                if age > max_age or age < -1.0:
+                    return None
             t = self.buf.lookup_transform("map", "base_link", Time())
         except Exception:
             return None

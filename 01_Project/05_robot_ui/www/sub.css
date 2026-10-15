@@ -1,0 +1,98 @@
+/* 屏2/3/4 子页共用样式（s- 前缀 = sub-page，不与 common.css 的 id 选择器冲突）
+   配色沿用屏1：底 #111、面 #222、主色 #2d6cdf、绿 #2e7d32、红 #c0392b、琥珀 #c47f17 */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html,body { margin:0; background:#111; color:#eee;
+              font-family:-apple-system,"Noto Sans CJK SC",sans-serif; }
+  .s-page { min-height:100vh; display:flex; flex-direction:column; padding-bottom:64px; }
+
+  /* 顶栏：返回 + 标题 + 右侧动作 */
+  .s-topbar { display:flex; align-items:center; gap:10px; padding:10px 12px;
+              background:#222; border-bottom:1px solid #333; position:sticky; top:0; z-index:20; }
+  .s-back { color:#7fb2e5; text-decoration:none; font-size:20px; padding:2px 8px; }
+  .s-title { flex:1 1 auto; font-size:16px; font-weight:700; }
+  .s-act { background:#444; color:#eee; border:0; border-radius:8px; padding:7px 12px; font-size:13px; }
+  .s-act:active { background:#666; }
+
+  /* 地图区：与屏1 同款 img 全宽 contain，touch-action 交给 map.js 手势 */
+  .s-mapwrap { position:relative; width:100%; height:44vh; min-height:240px;
+               background:#000; overflow:hidden; touch-action:none; }
+  .s-mapimg { width:100%; height:100%; object-fit:contain; display:block; cursor:crosshair;
+              -webkit-user-drag:none; user-select:none; }
+
+  /* 列表行 */
+  .s-list { padding:8px 12px; display:flex; flex-direction:column; gap:8px; }
+  .s-row { display:flex; align-items:center; gap:8px; background:#222;
+           border:1px solid #333; border-radius:10px; padding:8px 10px; font-size:13px; }
+  .s-row .s-name { flex:0 0 auto; max-width:26vw; overflow:hidden; text-overflow:ellipsis;
+                   white-space:nowrap; color:#7fd1ff; font-weight:600; }
+  .s-row .s-xy { flex:1 1 auto; color:#999; font-size:12px; min-width:0;
+                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .s-row input.s-dwell { width:52px; background:#111; color:#eee; border:1px solid #444;
+                         border-radius:6px; padding:4px 4px; font-size:13px; text-align:center; }
+  .s-row .s-del, .s-row .s-mv { background:#333; color:#ccc; border:0; border-radius:6px;
+                                padding:5px 9px; font-size:14px; line-height:1; }
+  .s-row .s-del:active, .s-row .s-mv:active { background:#555; }
+  .s-empty { color:#777; text-align:center; font-size:13px; padding:22px 0; }
+
+  /* 按钮：主色 / 绿 / 红 / 琥珀 */
+  .s-btn { border:0; border-radius:10px; font-weight:700; color:#fff; padding:11px 16px; font-size:14px; }
+  .s-btn:disabled { background:#555; }
+  .s-blue { background:#2d6cdf; } .s-blue:active { background:#3f86f5; }
+  .s-green { background:#2e7d32; } .s-green:active { background:#3b9c40; }
+  .s-red { background:#c0392b; } .s-red:active { background:#e74c3c; }
+  .s-amber { background:#c47f17; } .s-amber:active { background:#e09a2b; }
+  .s-big { width:100%; padding:15px; font-size:17px; border-radius:12px; }
+
+  /* 徽标圆（序号/状态点） */
+  .s-badge { flex:0 0 auto; width:24px; height:24px; border-radius:50%; background:#444; color:#eee;
+             display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; }
+  .s-dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:#666; }
+
+  /* 进度条 */
+  .s-bar { height:12px; background:#222; border:1px solid #333; border-radius:8px; overflow:hidden; }
+  .s-bar-in { height:100%; width:0%; background:#2d6cdf; transition:width .4s; }
+
+  /* 状态色：done 绿 / active 蓝 / skipped 琥珀 / failed 红 / pending 灰 */
+  .s-done { background:#2e7d32; }
+  .s-active { background:#2d6cdf; }
+  .s-skipped { background:#c47f17; }
+  .s-failed { background:#c0392b; }
+  .s-pending { background:#555; }
+  .s-tx-done { color:#4caf50; } .s-tx-active { color:#7fb2e5; }
+  .s-tx-skipped { color:#e0a13a; } .s-tx-failed { color:#e57368; } .s-tx-pending { color:#888; }
+
+  /* 底部操作区（屏2 开始巡逻 / 屏3 控制栏） */
+  .s-foot { margin-top:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px;
+            background:#181818; border-top:1px solid #333; }
+  .s-footrow { display:flex; gap:8px; }
+  .s-footrow .s-btn { flex:1 1 0; }
+  .s-summary { font-size:12px; color:#999; text-align:center; }
+  .s-chk { font-size:13px; color:#ccc; display:flex; align-items:center; gap:6px; }
+
+  /* 进度卡（屏3） */
+  .s-card { margin:12px; padding:14px; background:#222; border:1px solid #333; border-radius:12px; }
+  .s-bignum { font-size:34px; font-weight:800; text-align:center; letter-spacing:1px; }
+  .s-time { display:flex; justify-content:space-between; font-size:12px; color:#999; margin:8px 0 6px; }
+
+  /* 状态药丸（屏3 顶栏） */
+  .s-pill { font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px; color:#fff; }
+
+  /* 功能中心两列网格（屏4） */
+  .s-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:12px; }
+  .s-card2 { display:flex; align-items:center; gap:10px; background:#222; border:1px solid #333;
+             border-radius:12px; padding:14px 12px; font-size:14px; font-weight:600; color:#eee;
+             text-decoration:none; }
+  .s-card2:active { background:#2a2a2a; }
+  .s-card2 .s-sub { display:block; font-size:11px; color:#888; font-weight:400; margin-top:3px; }
+  .s-ph { display:flex; align-items:center; justify-content:center; color:#555; font-size:22px;
+          background:transparent; border:1px dashed #333; border-radius:12px; min-height:52px; }
+
+  /* 四屏导航条（sub.css 独家定义；index 页通过 <link href="/sub.css"> 复用，common.css 不动） */
+  .s-nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:#222;
+           border-top:1px solid #333; z-index:50; }
+  .s-nav a { flex:1 1 0; text-align:center; padding:11px 0 13px; color:#888;
+             font-size:13px; text-decoration:none; }
+  .s-nav a.on { color:#7fb2e5; font-weight:700; }
+  .s-nav a:active { color:#bbb; }
+  /* index 页（body.has-subnav）全屏布局，给底部摇杆区留出导航条高度 */
+  body.has-subnav #padbox { padding-bottom:58px; }

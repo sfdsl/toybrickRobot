@@ -209,6 +209,7 @@ class ChassisNode(Node):
         self.last_odom_time = self.get_clock().now()
 
         # ---------------- 串口 ----------------
+        self._last_reopen_t = 0.0     # 上次尝试重连的时刻（限频，避免 USB 抖动期疯狂重试）
         if self.dry_run:
             self.ser = None
             self.get_logger().warn('dry_run 模式：不打开串口，仅打印 PWM')
@@ -314,7 +315,7 @@ class ChassisNode(Node):
         try:
             data = self.ser.query('MTENCODER')
         except Exception as e:
-            self.get_logger().error('编码器读取失败：%s' % e, throttle_duration_sec=2.0)
+            self._reopen_serial(e)    # USB 重枚举后旧 fd 失效：尝试重连，下次轮询继续
             return
 
         vals = self._parse_ints(data)
@@ -346,6 +347,34 @@ class ChassisNode(Node):
             dt = 1.0 / self.poll_rate
 
         self.publish_odom(ros_now.to_msg(), dc / dt, dtheta / dt)
+
+    def _reopen_serial(self, err):
+        """串口掉线自愈：USB 重枚举后 pyserial 的旧 fd 永久失效，必须重新 open。
+
+        实测场景（2026-09-24）：GenesysLogic hub 掉线重枚举 → /dev/ttyCH341USB0 被重建，
+        pyserial 仍持有旧 fd → 读编码器一直抛异常 → /odom 与 odom→base_link TF 断流 →
+        nav2 local_costmap 报 "Tf has two or more unconnected trees"、safety_watchdog
+        反复急停。旧实现遇异常只 return，必须重启节点才恢复，这里改成自动重连。
+        """
+        now = time.time()
+        if now - self._last_reopen_t < 1.0:   # 限频：USB 抖动期最多每秒试一次
+            return False
+        self._last_reopen_t = now
+        self.get_logger().warn('串口异常（%s）→ 尝试重连 %s' % (err, self.port))
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+        try:
+            self.ser = ChassisSerial(self.port, self.baud)
+            self.ser.stop()        # 清掉重连前残留的运动指令
+            self.ser.enable()      # 重新使能电机（掉线期间下位机已自行失能）
+            self.last_pwm = None   # 强制重发当前 PWM，别被去重吞掉
+        except Exception as e2:
+            self.get_logger().warn('串口重连失败：%s（1s 后重试）' % e2)
+            return False
+        self.get_logger().warn('✓ 串口已重连：%s，电机重新使能，/odom + TF 恢复' % self.port)
+        return True
 
     @staticmethod
     def _parse_ints(text):

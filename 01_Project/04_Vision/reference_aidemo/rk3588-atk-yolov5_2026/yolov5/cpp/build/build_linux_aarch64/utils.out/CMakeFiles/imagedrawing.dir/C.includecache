@@ -1,0 +1,30 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/utils/common.h
+
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/utils/font.h
+
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/utils/image_drawing.c
+stdio.h
+-
+stdlib.h
+-
+string.h
+-
+ctype.h
+-
+image_drawing.h
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/utils/image_drawing.h
+font.h
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/utils/font.h
+
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/utils/image_drawing.h
+common.h
+/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/utils/common.h
+

@@ -719,7 +719,15 @@ class PhoneTeleop(MapViewer):
         return {'ok': True, 'msg': '多点出发：%d 个航点（进度见地图与终端）' % n, 'n': n}
 
     def _wp_feedback(self, fb):
-        idx = int(fb.feedback.current_pose_idx)
+        # nav2_msgs/action/FollowWaypoints 的反馈字段是 current_waypoint（Humble）；
+        # 旧称 current_pose_idx 已不存在——直接取属性会让 executor 抛异常、spin 线程整个死掉
+        # （症状：页面上的车不再跟着走）。用 getattr 兼容 + 兜底，任何解析失败都不致命。
+        try:
+            idx = int(getattr(fb.feedback, 'current_waypoint',
+                              getattr(fb.feedback, 'current_pose_idx', 0)))
+        except Exception as e:
+            self.get_logger().warn('航点进度反馈解析失败（已忽略）：%s' % e)
+            return
         if idx != self.wp_cur:
             self.wp_cur = idx
             self.get_logger().info('多点导航：正在前往第 %d/%d 点' % (idx + 1, len(self.wp_queue)))
@@ -983,6 +991,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, 'text/plain', b'not found')
 
 
+def spin_forever(node):
+    """rclpy.spin 的容错版：单个回调抛异常不再让整个页面变"僵尸"
+
+    教训（P35）：`_wp_feedback` 取了不存在的反馈字段 current_pose_idx → 异常从 executor 冒到
+    spin 线程 → 线程退出 → /odom、/map、/tf 全部不再处理，页面上的车永远停在异常那一刻
+    （车还在跑，画面不动）。这里把异常吃掉并续 spin，最坏只是一条日志。
+    """
+    while rclpy.ok():
+        try:
+            rclpy.spin(node)
+        except Exception as e:
+            print('[spin] 回调异常已忽略，继续 spin：%r' % (e,), flush=True)
+            time.sleep(0.5)
+
+
 def render_loop(node, size):
     """后台线程：把地图渲染成 JPEG（手机端直接从缓存取，避免并发渲染）
 
@@ -1071,7 +1094,7 @@ def main():
                        precheck=not args.no_precheck, map_prefix=args.map)
     Handler.node = node
 
-    threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
+    threading.Thread(target=spin_forever, args=(node,), daemon=True).start()
     threading.Thread(target=node.watchdog, daemon=True).start()
     threading.Thread(target=render_loop, args=(node, args.size), daemon=True).start()
 

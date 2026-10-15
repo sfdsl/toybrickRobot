@@ -1,0 +1,22 @@
+[Unit]
+Description=RK3588 YOLOv5 Camera Object Detection
+# 只等本地文件系统挂载好即可；摄像头就绪由 ExecStartPre 的 sleep 兜底
+After=local-fs.target
+
+[Service]
+Type=simple
+# 开机后稍等，等摄像头/NPU 驱动与设备节点就绪，避免启动时设备还没准备好
+ExecStartPre=/bin/sleep 10
+# 直接调用 run.sh（内部会设置 LD_LIBRARY_PATH 并选用命令行模式）
+ExecStart=/bin/bash /userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp/run.sh 0
+WorkingDirectory=/userdata/aidemo/rk3588-atk-yolov5_2026/yolov5/cpp
+# 进程异常退出（如摄像头暂时不可用）自动拉起
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+# 把打印的检测结果/ FPS 收进 journal，可用 journalctl 查看
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

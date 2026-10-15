@@ -33,6 +33,7 @@ class SafetyWatchdog(Node):
         self.dry_run = dry_run
         self.last_odom_t = time.time()
         self.alarmed = False
+        self.last_estop_t = 0.0
 
         self.create_subscription(Odometry, 'odom', self._on_odom, 10)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
@@ -47,6 +48,7 @@ class SafetyWatchdog(Node):
         self.last_odom_t = time.time()
         if self.alarmed:
             self.alarmed = False
+            self.estop_pub.publish(Bool(data=False))   # 解除急停标志（桥接只看 True）
             self.get_logger().info('✓ /odom 已恢复（导航不会自动恢复，需重新下发目标）')
 
     def _tick(self):
@@ -60,7 +62,11 @@ class SafetyWatchdog(Node):
         if not self.dry_run:
             for _ in range(3):
                 self.cmd_pub.publish(Twist())
-        self.estop_pub.publish(Bool(data=True))
+        # 急停只"进入时 + 之后每 5s"发一次：旧实现 0.2s 一发，桥接跟着每 200ms
+        # 打印一次"急停"并 cancelTask，日志被刷爆（实测 700ms 内 5 条），刷掉真正有用的信息
+        if time.time() - self.last_estop_t >= 5.0:
+            self.last_estop_t = time.time()
+            self.estop_pub.publish(Bool(data=True))
 
 
 def main():

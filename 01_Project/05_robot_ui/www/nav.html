@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>多点导航</title>
+<link rel="stylesheet" href="/sub.css"></head>
+<body><div class="s-page">
+  <div class="s-topbar">
+    <a class="s-back" href="/">←</a>
+    <div class="s-title">多点导航</div>
+    <button class="s-act" id="clr">清空</button>
+  </div>
+
+  <div class="s-mapwrap" id="mapbox">
+    <img class="s-mapimg" id="map" src="/stream.mjpg" alt="map" draggable="false">
+  </div>
+
+  <div class="s-list" id="list">
+    <div class="s-empty">航点为空：点地图依次加点，顺序即巡逻顺序</div>
+  </div>
+
+  <div class="s-foot">
+    <label class="s-chk"><input type="checkbox" id="loop"> 循环巡逻（走完一轮后从头再来）</label>
+    <button class="s-big s-green" id="go">开始巡逻</button>
+    <div class="s-summary" id="summary">共 0 点 · 预计 0s</div>
+  </div>
+
+  <nav class="s-nav">
+    <a href="/">遥控</a>
+    <a href="/nav.html" class="on">航点</a>
+    <a href="/patrol.html">巡逻</a>
+    <a href="/hub.html">功能</a>
+  </nav>
+</div>
+<div id="toast"></div>
+<script src="/api.js"></script>
+<script src="/map.js"></script>
+<script src="/nav.js"></script></body></html>

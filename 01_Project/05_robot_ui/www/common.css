@@ -1,0 +1,51 @@
+/* 屏1·遥控页样式（原 PAGE <style> 平移） */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html,body { margin:0; height:100%; background:#111; color:#eee;
+              font-family:-apple-system,"Noto Sans CJK SC",sans-serif; overflow:hidden; }
+  #wrap { display:flex; flex-direction:column; height:100%; }
+  #mapbox { position:relative; flex:1 1 auto; min-height:30%; overflow:hidden;
+            touch-action:none; }                 /* 自己处理手势，禁掉浏览器缩放 */
+  #map { width:100%; height:100%; object-fit:contain; display:block; cursor:crosshair;
+         -webkit-user-drag:none; user-select:none; }
+  #hud { position:absolute; left:8px; top:8px; font-size:12px; line-height:1.5;
+         background:rgba(0,0,0,.45); padding:6px 8px; border-radius:6px; }
+  #hud b { color:#7fd1ff; font-weight:600; }
+  #hud.min .line { display:none; }               /* 折叠后只剩连接状态 */
+  #hudT { margin-left:6px; padding:0 6px; font-size:12px; color:#ddd;
+          background:#333; border:0; border-radius:4px; }
+  #hudT:active { background:#555; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#666; }
+  .ok { background:#3fbf5f; } .bad { background:#e33; }
+  #btns { position:absolute; right:8px; top:8px; display:flex; flex-direction:column; gap:8px; }
+  #save { padding:10px 14px; font-size:15px; font-weight:700; color:#fff;
+          background:#2d6cdf; border:0; border-radius:10px; }
+  #save:active { background:#3f86f5; }
+  #save[disabled] { background:#555; }
+  #goalclr { padding:8px 12px; font-size:13px; font-weight:600; color:#eee;
+            background:#444; border:0; border-radius:10px; }
+  #goalclr:active { background:#666; }
+  #home { padding:10px 14px; font-size:15px; font-weight:700; color:#fff;
+          background:#c47f17; border:0; border-radius:10px; }
+  #home:active { background:#e09a2b; }
+  #home[disabled] { background:#555; }
+  #zbtns { position:absolute; right:8px; bottom:8px; display:flex; flex-direction:column; gap:6px; }
+  #zbtns button { width:44px; height:44px; font-size:20px; font-weight:700; color:#eee;
+                  background:rgba(0,0,0,.55); border:1px solid #555; border-radius:10px; }
+  #zbtns button:active { background:rgba(255,255,255,.25); }
+  #toast { position:absolute; left:50%; transform:translateX(-50%); bottom:12px;
+           max-width:92%; padding:8px 12px; font-size:13px; line-height:1.4;
+           background:rgba(0,0,0,.78); border-radius:8px; display:none; }
+  #padbox { flex:0 0 auto; padding:10px 12px 14px; background:#181818; }
+  #pad { position:relative; width:100%; height:34vh; min-height:180px; max-height:300px;
+         background:#222; border:1px solid #333; border-radius:14px; touch-action:none; }
+  #knob { position:absolute; width:84px; height:84px; margin:-42px 0 0 -42px;
+          left:50%; top:50%; border-radius:50%; background:#3a6ea5;
+          border:2px solid #7fb2e5; transition:background .1s; }
+  #knob.on { background:#4f8fd0; }
+  #row { display:flex; gap:10px; align-items:center; margin-top:10px; }
+  #stop { flex:0 0 34%; height:64px; font-size:22px; font-weight:700; color:#fff;
+          background:#c0392b; border:0; border-radius:12px; }
+  #stop:active { background:#e74c3c; }
+  #sliders { flex:1 1 auto; font-size:12px; color:#bbb; }
+  #sliders input { width:100%; }
+  #hint { font-size:11px; color:#777; margin-top:6px; text-align:center; }

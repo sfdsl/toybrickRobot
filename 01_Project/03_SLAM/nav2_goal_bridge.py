@@ -100,9 +100,18 @@ class GoalBridge(BasicNavigator):
 
     # ---------- 主循环里调用 ----------
     def stop_now(self):
-        """连发几帧零速度（底盘看门狗 0.5s，多来几帧保险）"""
+        """连发几帧零速度（底盘看门狗 0.5s，多来几帧保险）。
+
+        退出路径（Ctrl-C）里 context 可能已关闭，publish 会抛 RCLError——
+        此时静默放弃（底盘看门狗 0.5s 收不到指令会自停），别让退出报错。
+        """
         for _ in range(5):
-            self.cmd_pub.publish(Twist())
+            if not rclpy.ok():
+                return
+            try:
+                self.cmd_pub.publish(Twist())
+            except Exception:
+                return
 
     def cancel(self):
         try:
@@ -138,9 +147,11 @@ def main():
             # 1) 急停优先
             if nav.estop:
                 nav.estop = False
-                nav.get_logger().error('⚠ 急停：取消导航并停车')
+                was_active = nav.active
                 nav.cancel()
                 nav.stop_now()
+                if was_active:      # 没有在跑的任务时不刷日志（看门狗 5s 一次也会走到这）
+                    nav.get_logger().error('⚠ 急停：取消导航并停车')
 
             # 2) 新目标（改道）
             if nav.pending_goal is not None:
@@ -162,12 +173,15 @@ def main():
                 nav.get_logger().info('✓ 导航任务结束，等待下一个目标'
                                       + ('' if res is None else ''))
     except KeyboardInterrupt:
-        pass
+        try:
+            nav.stop_now()      # 趁 context 还活着，第一时间停车
+        except Exception:
+            pass
     finally:
         nav.cancel()
-        nav.stop_now()
+        nav.stop_now()          # context 已关时内部自会跳过（底盘看门狗兜底）
         nav.destroyNode()
-        rclpy.shutdown()
+        rclpy.try_shutdown()    # 幂等：重复关不抛
 
 
 if __name__ == '__main__':

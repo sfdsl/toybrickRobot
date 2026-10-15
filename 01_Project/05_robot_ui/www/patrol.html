@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>巡逻执行</title>
+<link rel="stylesheet" href="/sub.css"></head>
+<body><div class="s-page">
+  <div class="s-topbar">
+    <a class="s-back" href="/">←</a>
+    <div class="s-title">巡逻执行中</div>
+    <span class="s-pill s-pending" id="pill">待命</span>
+  </div>
+
+  <div class="s-card">
+    <div class="s-bignum"><span id="cur">0</span> / <span id="total">0</span></div>
+    <div class="s-time"><span>已用 <b id="elapsed">0:00</b></span><span>剩余 <b id="eta">--:--</b></span></div>
+    <div class="s-bar"><div class="s-bar-in" id="bar"></div></div>
+  </div>
+
+  <div class="s-list" id="list">
+    <div class="s-empty">未装载巡逻点（回屏2 加点后开始巡逻）</div>
+  </div>
+
+  <div class="s-foot">
+    <div class="s-footrow">
+      <button class="s-btn s-amber" id="pp">暂停</button>
+      <button class="s-btn s-blue" id="skip">跳过</button>
+      <button class="s-btn s-red" id="cancel">终止</button>
+    </div>
+  </div>
+
+  <nav class="s-nav">
+    <a href="/">遥控</a>
+    <a href="/nav.html">航点</a>
+    <a href="/patrol.html" class="on">巡逻</a>
+    <a href="/hub.html">功能</a>
+  </nav>
+</div>
+<div id="toast"></div>
+<script src="/api.js"></script>
+<script src="/patrol.js"></script></body></html>

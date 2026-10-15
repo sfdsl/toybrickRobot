@@ -175,7 +175,8 @@ void  ToLaserscanMessagePublish(ldlidar::Points2D& src, ldlidar::LiPkg* commpkg,
   angle_max = (2 * M_PI);
   range_min = 0.02;
   range_max = 12;
-  int beam_size = static_cast<int>(src.size());
+  // Match the 668-beam grid stored in robot_map.posegraph on every revolution.
+  constexpr int beam_size = 668;
   angle_increment = (angle_max - angle_min) / (float)(beam_size -1);
   // Calculate the number of scanning points
   if (commpkg->GetSpeedOrigin() > 0) {
@@ -225,11 +226,7 @@ void  ToLaserscanMessagePublish(ldlidar::Points2D& src, ldlidar::LiPkg* commpkg,
 
       float angle = ANGLE_TO_RADIAN(dir_angle); // Lidar angle unit form degree transform to radian
       int index = static_cast<int>((angle - output.angle_min) / output.angle_increment);
-      if (index < beam_size) {
-        if (index < 0) {
-          RCLCPP_ERROR(node->get_logger(), "[ldrobot] error index: %d, beam_size: %d, angle: %f, output.angle_min: %f, output.angle_increment: %f", 
-                    index, beam_size, angle, output.angle_min, output.angle_increment);
-        }
+      if (index >= 0 && index < beam_size) {
         // If the current content is Nan, it is assigned directly
         if (std::isnan(output.ranges[index])) {
           output.ranges[index] = range;

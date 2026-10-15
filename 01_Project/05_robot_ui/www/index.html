@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>小车遥控</title>
+<link rel="stylesheet" href="/common.css">
+<link rel="stylesheet" href="/sub.css"></head>
+<body class="has-subnav"><div id="wrap">
+  <div id="mapbox">
+    <img id="map" src="/stream.mjpg" alt="map" draggable="false">
+    <div id="hud">
+      <div><span id="dot" class="dot"></span> <span id="conn">连接中…</span>
+        <button id="hudT" title="折叠/展开">≡</button></div>
+      <div class="line">位姿 <b id="pose">-</b></div>
+      <div class="line">速度 <b id="vel">-</b></div>
+      <div class="line">目标 <b id="goal">-</b></div>
+      <div class="line">视野 <b id="zoom">-</b></div>
+    </div>
+    <div id="btns">
+      <button id="save">保存地图</button>
+      <button id="home">回原点</button>
+      <button id="wpm">多点</button>
+      <button id="goalclr">清除目标·停车</button>
+    </div>
+    <div id="zbtns">
+      <button id="zin" title="放大">＋</button>
+      <button id="zout" title="缩小">－</button>
+      <button id="zrst" title="复位（回车上/初始视野）">⟳</button>
+    </div>
+    <div id="toast"></div>
+  </div>
+  <div id="padbox">
+    <div id="pad"><div id="knob"></div></div>
+    <div id="row">
+      <button id="stop">停 止</button>
+      <div id="sliders">
+        前进上限 <span id="vl">0.15</span> m/s
+        <input id="vs" type="range" min="5" max="30" value="15">
+        转向上限 <span id="wl">0.60</span> rad/s
+        <input id="ws" type="range" min="20" max="150" value="60">
+      </div>
+    </div>
+    <div id="hint">圆盘：上=前进 左右=转向 ｜ 地图：点一下=设目标，拖=平移，捏合=缩放，双击=复位 ｜ 桌面可用方向键</div>
+  </div>
+  <nav class="s-nav">
+    <a href="/" class="on">遥控</a>
+    <a href="/nav.html">航点</a>
+    <a href="/patrol.html">巡逻</a>
+    <a href="/hub.html">功能</a>
+  </nav>
+</div>
+<script src="/api.js"></script>
+<script src="/map.js"></script>
+<script src="/index.js"></script></body></html>

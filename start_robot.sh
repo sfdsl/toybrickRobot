@@ -5,6 +5,14 @@
 #   ~/RobotCode/start_robot.sh                     建图模式启动（默认）
 #   ~/RobotCode/start_robot.sh --mode localization 定位模式启动（导航用）
 #   ~/RobotCode/start_robot.sh --nav               同时起导航监听（手机点地图即出发；可连续点）
+#   ~/RobotCode/start_robot.sh --nav2              nav2 全栈（手机点地图 → /goal_pose → nav2）
+#   ~/RobotCode/start_robot.sh --ui               只起四屏 UI（robot_ui）：不开相机、不跑 yolo
+#                                                  ——最省：NPU 空闲、相机不占、CPU 最轻
+#   ~/RobotCode/start_robot.sh --ui --cam         四屏 UI + 相机（cam_pub）：hub 屏看原始画面，
+#                                                  仍不跑 yolo 识别
+#   ~/RobotCode/start_robot.sh --vision            视觉全链路：cam_pub + rknn_infer + 四屏UI
+#                                                  （= --ui --cam + yolo；手机 hub 屏 → /cam.mjpg
+#                                                   实时检测画面，《13》P3）
 #   ~/RobotCode/start_robot.sh --dry-run           只做预检查，不启动
 #   ~/RobotCode/start_robot.sh --stop              急停（先发零速度，再收掉所有节点）
 #
@@ -44,8 +52,14 @@ stop_all() {
     pkill -INT -f 'nav2.launch.py'           2>/dev/null; sleep 0.5
     pkill -INT -f 'lib/nav2_'                2>/dev/null; sleep 0.5
     pkill -INT -f 'nav2_goal_bridge'         2>/dev/null; sleep 0.5
+    # 视觉链路（--vision 拉起的三件套 + 可能残留的旧版手机遥控）
+    pkill -INT -f 'phone_teleop.py'          2>/dev/null; sleep 0.5
+    pkill -INT -f 'robot_ui.app'             2>/dev/null; sleep 0.3
+    pkill -f   'rknn_infer/rknn_infer'       2>/dev/null; sleep 0.3
+    pkill -f   'cam_pub/cam_pub'             2>/dev/null; sleep 0.3
     for pat in 'phone_teleop.py' 'slam_toolbox' 'ldlidar' 'chassis_node' 'odom_rec.py' \
-               'nav2.launch.py' 'lib/nav2_' 'nav2_goal_bridge'; do
+               'nav2.launch.py' 'lib/nav2_' 'nav2_goal_bridge' \
+               'robot_ui.app' 'rknn_infer/rknn_infer' 'cam_pub/cam_pub'; do
         if pgrep -f "$pat" >/dev/null; then
             say "强制结束残留：$pat"
             pkill -9 -f "$pat" 2>/dev/null
@@ -88,16 +102,25 @@ MODE="mapping"
 DRY=0
 NAV=0
 NAV2=0
+UI=0
+CAM=0
+VISION=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --stop)     stop_all; exit 0 ;;
         --mode)     MODE="${2:-mapping}"; shift 2 ;;
         --nav)      NAV=1; shift ;;
         --nav2)     NAV2=1; shift ;;
+        --ui)       UI=1; shift ;;
+        --cam)      CAM=1; shift ;;            # 只开相机（cam_pub），配合 --ui 用
+        --vision)   UI=1; CAM=1; VISION=1; shift ;;   # = --ui --cam + yolo 检测
         --dry-run)  DRY=1; shift ;;
-        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --nav2 / --dry-run / --stop）"; exit 2 ;;
+        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --nav2 / --ui / --cam / --vision / --dry-run / --stop）"; exit 2 ;;
     esac
 done
+if [ "$CAM" = "1" ] && [ "$UI" = "0" ] && [ "$VISION" = "0" ]; then
+    say "提示：--cam 只开相机（cam_pub），没配 --ui/--vision 时页面看不到画面；继续启动。"
+fi
 case "$MODE" in
     mapping|localization) ;;
     *) fail "mode 只能是 mapping 或 localization（收到：$MODE）"; exit 2 ;;
@@ -124,6 +147,11 @@ source "$SETUP"
 source "$WS/install/setup.bash"
 set -u
 
+# 旧版手机遥控 phone_teleop.py 由 launch 默认拉起（phone:=true，占 8080）；
+# --ui/--vision 时四屏 UI（robot_ui）已接管 8080，必须关掉 launch 里的旧版，否则端口冲突
+PHONE_ARG="true"
+[ "$UI" = "1" ] && PHONE_ARG="false"
+
 if ! ros2 pkg prefix robot_bringup >/dev/null 2>&1; then
     fail "找不到 robot_bringup 包 —— 先构建："
     say  "        cd $WS && colcon build --packages-select robot_bringup && source install/setup.bash"
@@ -137,6 +165,46 @@ nohup python3 "$HOME/RobotCode/01_Project/03_SLAM/odom_rec.py" >/dev/null 2>&1 &
 disown 2>/dev/null || true
 say "位姿记录已开：tail -f /tmp/rec_live.log"
 
+# ---------------- 四屏 UI / 相机 / 视觉链路（--ui [--cam] / --vision，独立后台，robotstop 统一收） ----
+# --ui          ：只 robot_ui（四屏页）；不开相机、不跑 yolo —— 最省
+# --ui --cam    ：+ cam_pub → robot_ui（/cam.mjpg 原始相机画面），仍不跑 yolo
+# --vision      ：+ cam_pub + rknn_infer（/detections + /image_det）→ /cam.mjpg 画框画面
+if [ "$UI" = "1" ] || [ "$CAM" = "1" ]; then
+    # 清旧实例（含旧版 phone_teleop——四屏 UI 接管 8080 端口，避免两套 UI 抢）
+    pkill -9 -f 'cam_pub/cam_pub'      2>/dev/null
+    pkill -9 -f 'rknn_infer/rknn_infer' 2>/dev/null
+    pkill -9 -f 'robot_ui.app'         2>/dev/null
+    pkill -INT -f 'phone_teleop.py'    2>/dev/null; sleep 0.5
+    if [ "$CAM" = "1" ]; then
+        nohup ros2 run cam_pub cam_pub > /tmp/cam_pub.log 2>&1 &
+    fi
+    if [ "$VISION" = "1" ]; then
+        nohup ros2 run rknn_infer rknn_infer > /tmp/rknn_infer.log 2>&1 &
+    fi
+    if [ "$UI" = "1" ]; then
+        ( cd "$HOME/RobotCode/01_Project/03_SLAM" && \
+          nohup python3 -m robot_ui.app    > /tmp/robot_ui.log    2>&1 & )
+    fi
+    sleep 2
+    ok_ui=1
+    [ "$UI" = "1" ]     && { pgrep -f 'robot_ui.app'          >/dev/null || ok_ui=0; }
+    [ "$CAM" = "1" ]    && { pgrep -f 'cam_pub/cam_pub'       >/dev/null || ok_ui=0; }
+    [ "$VISION" = "1" ] && { pgrep -f 'rknn_infer/rknn_infer' >/dev/null || ok_ui=0; }
+    if [ "$ok_ui" = "1" ]; then
+        if [ "$VISION" = "1" ]; then
+            ok "视觉链路已开（含 yolo）：手机开四屏 UI「功能中心」看检测画面（地址见 /tmp/robot_ui.log）"
+        elif [ "$CAM" = "1" ]; then
+            ok "四屏 UI + 相机已开（无 yolo 识别）：「功能中心」显示原始相机画面（地址见 /tmp/robot_ui.log）"
+        elif [ "$UI" = "1" ]; then
+            ok "四屏 UI 已开（无相机、无 yolo）：遥控/地图/航点/巡逻可用，「功能中心」无画面（地址见 /tmp/robot_ui.log）"
+        else
+            ok "相机已开（cam_pub → /image_raw）"
+        fi
+    else
+        fail "UI/相机/视觉链路有进程未存活，查看 /tmp/cam_pub.log /tmp/rknn_infer.log /tmp/robot_ui.log"
+    fi
+fi
+
 # P33：launch 输出实时落盘（tee → /tmp/nav2_live.log）——打转主体/recovery 判定
 #   需要 nav2 日志，不能只靠用户终端滚动缓冲。SIGINT 发给前台进程组，
 #   ros2 launch 与 tee 同时收到，Ctrl-C 行为不变（shell 留守等管道结束，无副作用）。
@@ -144,7 +212,7 @@ if [ "$NAV" = "1" ]; then
     [ "$MODE" = "localization" ] || say "提示：--nav 通常与 --mode localization 一起用（当前 mode=$MODE）"
     say "启动中 ...（含导航监听：手机点地图即出发、可连续点；Ctrl-C 停止全部）"
     say "日志落盘：tail -f /tmp/nav2_live.log"
-    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav:=true 2>&1 | tee /tmp/nav2_live.log
+    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav:=true phone:="$PHONE_ARG" 2>&1 | tee /tmp/nav2_live.log
     exit 0
 fi
 
@@ -153,9 +221,9 @@ if [ "$NAV2" = "1" ]; then
     [ "$MODE" = "localization" ] || say "提示：--nav2 通常与 --mode localization 一起用（当前 mode=$MODE）"
     say "启动中 ...（nav2 全栈 + 手机点地图即出发；Ctrl-C 停止全部）"
     say "日志落盘：tail -f /tmp/nav2_live.log"
-    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav2:=true 2>&1 | tee /tmp/nav2_live.log
+    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav2:=true phone:="$PHONE_ARG" 2>&1 | tee /tmp/nav2_live.log
     exit 0
 fi
 say "启动中 ...（Ctrl-C 停止全部）"
 say "日志落盘：tail -f /tmp/nav2_live.log"
-ros2 launch robot_bringup bringup.launch.py mode:="$MODE" 2>&1 | tee /tmp/nav2_live.log
+ros2 launch robot_bringup bringup.launch.py mode:="$MODE" phone:="$PHONE_ARG" 2>&1 | tee /tmp/nav2_live.log

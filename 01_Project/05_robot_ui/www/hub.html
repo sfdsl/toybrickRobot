@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>功能中心</title>
+<link rel="stylesheet" href="/sub.css"></head>
+<body><div class="s-page">
+  <div class="s-topbar">
+    <a class="s-back" href="/">←</a>
+    <div class="s-title">功能中心</div>
+  </div>
+  <div class="s-summary" style="padding-top:12px" id="summary">共 15 项 · 已具备 4 · 进行中 3 · 待做 8</div>
+
+  <div style="margin:0 12px 12px">
+    <img id="camview" src="/cam.mjpg" alt="相机画面"
+         style="width:100%;border-radius:10px;display:block;background:#000;min-height:120px"
+         onerror="this.style.opacity=.25">
+    <div style="font-size:11px;color:#888;text-align:center;margin-top:4px" id="camnote">
+      相机画面（跑 yolo 时显示检测框；未跑则显示原始画面，需 cam_pub 在跑）</div>
+  </div>
+
+  <div class="s-grid" id="grid"></div>
+
+  <nav class="s-nav">
+    <a href="/">遥控</a>
+    <a href="/nav.html">航点</a>
+    <a href="/patrol.html">巡逻</a>
+    <a href="/hub.html" class="on">功能</a>
+  </nav>
+</div>
+<div id="toast"></div>
+<script src="/api.js"></script>
+<script src="/hub.js"></script></body></html>

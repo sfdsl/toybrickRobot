@@ -1,0 +1,7 @@
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/build/build_linux_aarch64/CMakeFiles/install/strip.dir
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/build/build_linux_aarch64/CMakeFiles/install/local.dir
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/build/build_linux_aarch64/CMakeFiles/install.dir
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/build/build_linux_aarch64/CMakeFiles/list_install_components.dir
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/build/build_linux_aarch64/CMakeFiles/rebuild_cache.dir
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/build/build_linux_aarch64/CMakeFiles/edit_cache.dir
+/home/alientek/Downloads/模型转换例子/inference/1-atk_rknn_mobilenet_v1_demo/build/build_linux_aarch64/CMakeFiles/atk_mobilenet_v1.dir

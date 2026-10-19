@@ -60,6 +60,7 @@ try:
     from geometry_msgs.msg import PoseStamped, Twist
     from nav_msgs.msg import Odometry
     from nav2_msgs.action import FollowWaypoints
+    from std_msgs.msg import String
 except ImportError as e:
     raise SystemExit(
         '导入模块失败：%s\n提示：先 source 环境（或用 ~/.bash_aliases 里的别名 phone）\n'
@@ -466,6 +467,7 @@ class PhoneTeleop(MapViewer):
         self.view_range_cur = float(view_range)   # 当前视野（网页缩放会改它）
         self.view_off = (0.0, 0.0)                # 视窗中心相对车的偏移（米）
         self.pub = self.create_publisher(Twist, self.topic, 10)
+        self.control_pub = self.create_publisher(String, '/control/command', 10)
         self.goal_pub = self.create_publisher(PoseStamped, goal_topic, 10)
         # 点选预检：加载地图 + 代价图（只做一次）；失败只降级、不影响其它功能
         self.precheck = None
@@ -550,6 +552,8 @@ class PhoneTeleop(MapViewer):
             if u is None or v is None or not (0 <= u < size and 0 <= v < size):
                 return {'ok': False, 'msg': '点到了画面外'}
             x, y = x0 + u / s, y1 - v / s
+        if self.robot_pose(max_age=2.0) is None:
+            return {'ok': False, 'msg': '定位 map→odom 超过 2 秒未更新；目标未发送'}
         self.set_cmd(0.0, 0.0)                      # 先停一帧，避免与摇杆指令打架
         # ── 预检：用与 nav 同一份规划代码本地试算（不发任何指令）──
         pre, pre_note = None, ''
@@ -577,6 +581,9 @@ class PhoneTeleop(MapViewer):
         t.header.stamp = self.get_clock().now().to_msg()
         t.pose.position.x, t.pose.position.y = float(x), float(y)
         t.pose.orientation.w = 1.0                  # 朝向留给 goal_nav（可用 --goal x y yaw 再转）
+        ctl = String()
+        ctl.data = 'nav'
+        self.control_pub.publish(ctl)
         self.goal_pub.publish(t)
         self.goal = (float(x), float(y), time.time())
         with self.lock:
@@ -630,6 +637,9 @@ class PhoneTeleop(MapViewer):
             self.goal_pub.publish(t)
             stopped = True
         self.set_cmd(0.0, 0.0)
+        ctl = String()
+        ctl.data = 'stop'
+        self.control_pub.publish(ctl)
         self.goal = None
         msg = '目标已清除' + ('（已让导航就地停车、回到等待状态）' if stopped else '')
         self.get_logger().info(msg)
@@ -696,6 +706,9 @@ class PhoneTeleop(MapViewer):
             ps.pose.orientation.w = 1.0
             g.poses.append(ps)
         self.set_cmd(0.0, 0.0)
+        ctl = String()
+        ctl.data = 'nav'
+        self.control_pub.publish(ctl)
         self.goal = None
         fut = ac.send_goal_async(g, feedback_callback=self._wp_feedback)
         t0 = time.time()
@@ -918,6 +931,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, 'text/plain', ('%+.2f %+.2f' % (vx, wz)).encode())
         elif u.path == '/stop':
             self.node.set_cmd(0.0, 0.0)
+            ctl = String()
+            ctl.data = 'stop'
+            self.node.control_pub.publish(ctl)
             self._send(200, 'text/plain', b'stopped')
         elif u.path == '/view':
             # 缩放/平移：range=米 &&/|| dx= dy=（米，相对车心）；reset=1 复位

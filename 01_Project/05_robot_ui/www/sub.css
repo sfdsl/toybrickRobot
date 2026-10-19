@@ -16,7 +16,9 @@
   /* 地图区：与屏1 同款 img 全宽 contain，touch-action 交给 map.js 手势 */
   .s-mapwrap { position:relative; width:100%; height:44vh; min-height:240px;
                background:#000; overflow:hidden; touch-action:none; }
-  .s-mapimg { width:100%; height:100%; object-fit:contain; display:block; cursor:crosshair;
+  /* 光标同屏1：自定义 SVG（青+白描边），热区正中；失败退回原生 crosshair */
+  .s-mapimg { width:100%; height:100%; object-fit:contain; display:block;
+              cursor:url(/crosshair.svg) 16 16, crosshair;
               -webkit-user-drag:none; user-select:none; }
 
   /* 列表行 */

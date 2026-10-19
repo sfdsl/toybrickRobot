@@ -18,7 +18,8 @@ try:
     from geometry_msgs.msg import PoseStamped, Twist
     from nav_msgs.msg import Odometry
     from nav2_msgs.action import FollowWaypoints
-    from sensor_msgs.msg import CompressedImage, Image   # 视觉 HUD：/image_det(画框) + /image_raw(原始)
+    from sensor_msgs.msg import BatteryState, CompressedImage, Image
+    from std_msgs.msg import String
     from cv_bridge import CvBridge                       # 无 yolo 时把 /image_raw 编成 JPEG
 except ImportError as e:
     raise SystemExit(
@@ -29,6 +30,7 @@ except ImportError as e:
 from map_viewer import MapViewer      # 复用地图订阅 + 渲染（同目录）
 from save_map import DEFAULT_SAVE_DIR, save_pgm_yaml, serialize_posegraph
 from robot_ui.patrol import PatrolRunner   # 屏3 巡逻后端（方案A：顺序 NavigateToPose）
+from robot_ui.places import PlaceStore
 
 CMD_TIMEOUT = 0.6                     # 看门狗：多久没收到指令就发零速度
 STREAM_FPS = 8                        # 推给手机的帧率（地图流）
@@ -103,6 +105,8 @@ class PhoneTeleop(MapViewer):
         self.lock = threading.Lock()
         self.modes = ModeMgr()        # 控制权互斥（四屏并发用）
         self.patrol = PatrolRunner(self)   # 巡逻分发器（Task 6：/patrol/* 后端）
+        self.places = PlaceStore(map_prefix or gn.MAP_DEFAULT)
+        self.battery = None
         self.cmd = (0.0, 0.0)         # 最近一次下发的 (vx, wz)
         self.last_cmd_t = 0.0         # 最近一次收到网页指令的时刻
         self.n_cmd = 0
@@ -121,6 +125,7 @@ class PhoneTeleop(MapViewer):
         self.view_range_cur = float(view_range)   # 当前视野（网页缩放会改它）
         self.view_off = (0.0, 0.0)                # 视窗中心相对车的偏移（米）
         self.pub = self.create_publisher(Twist, self.topic, 10)
+        self.control_pub = self.create_publisher(String, '/control/command', 10)
         self.goal_pub = self.create_publisher(PoseStamped, goal_topic, 10)
         # 点选预检：加载地图 + 代价图（只做一次）；失败只降级、不影响其它功能
         self.precheck = None
@@ -131,6 +136,7 @@ class PhoneTeleop(MapViewer):
             except Exception as e:
                 self.get_logger().warn('预检不可用（点选将跳过预检）：%s' % e)
         self.create_subscription(Odometry, '/odom', self.on_odom, 10)
+        self.create_subscription(BatteryState, '/battery', self.on_battery, 10)
         # 视觉 HUD（《13》P3）：优先 rknn_infer 的画框 JPEG（/image_det，10fps）；
         # 没跑 yolo（robotnav --nav2 --ui）时自动降级到 /image_raw 原始画面（本地按 CAM_FPS 节流编码）
         self.det_jpeg = b''
@@ -189,6 +195,23 @@ class PhoneTeleop(MapViewer):
 
     def on_odom(self, msg):
         self.odom_vel = (msg.twist.twist.linear.x, msg.twist.twist.angular.z)
+
+    def on_battery(self, msg):
+        self.battery = {'voltage': round(msg.voltage, 3),
+                        'percentage': round(msg.percentage * 100, 1)
+                        if math.isfinite(msg.percentage) else None,
+                        'stamp': time.time()}
+
+    def current_map_id(self):
+        try:
+            return self.places.map_id()
+        except (OSError, ValueError):
+            return None
+
+    def publish_control(self, command):
+        msg = String()
+        msg.data = command
+        self.control_pub.publish(msg)
 
     def set_cmd(self, vx, wz):
         """裁剪并发布速度；返回实际下发值"""
@@ -260,19 +283,20 @@ class PhoneTeleop(MapViewer):
             if u is None or v is None or not (0 <= u < size and 0 <= v < size):
                 return {'ok': False, 'msg': '点到了画面外'}
             x, y = x0 + u / s, y1 - v / s
+        if not (math.isfinite(float(x)) and math.isfinite(float(y))):
+            return {'ok': False, 'msg': '目标坐标无效'}
+        pose = self.robot_pose(max_age=2.0)
+        if pose is None:
+            return {'ok': False, 'msg': '定位 map→odom 超过 2 秒未更新；目标未发送'}
         self.set_cmd(0.0, 0.0)                      # 先停一帧，避免与摇杆指令打架
         # ── 预检：用与 nav 同一份规划代码本地试算（不发任何指令）──
         pre, pre_note = None, ''
         if self.precheck is not None:
-            pose = self.robot_pose()
-            if pose is None:
-                pre_note = '｜预检跳过（还没有位姿）'
-            else:
-                try:
-                    pre = self.precheck.check((pose[0], pose[1]), (x, y))
-                except Exception as e:
-                    pre = None
-                    self.get_logger().warn('预检异常（跳过）：%s' % e)
+            try:
+                pre = self.precheck.check((pose[0], pose[1]), (x, y))
+            except Exception as e:
+                pre = None
+                self.get_logger().warn('预检异常（跳过）：%s' % e)
         if pre is not None and not pre['ok']:
             m = '✗ 预检未通过：%s —— 请换个点（确要强行下发：启动 phone 时加 --no-precheck）' % pre['msg']
             self.get_logger().warn('目标 (%.2f, %.2f) 预检失败：%s' % (x, y, pre['msg']))
@@ -287,6 +311,7 @@ class PhoneTeleop(MapViewer):
         t.header.stamp = self.get_clock().now().to_msg()
         t.pose.position.x, t.pose.position.y = float(x), float(y)
         t.pose.orientation.w = 1.0                  # 朝向留给 goal_nav（可用 --goal x y yaw 再转）
+        self.publish_control('nav')
         self.goal_pub.publish(t)
         self.goal = (float(x), float(y), time.time())
         with self.lock:
@@ -340,6 +365,7 @@ class PhoneTeleop(MapViewer):
             self.goal_pub.publish(t)
             stopped = True
         self.set_cmd(0.0, 0.0)
+        self.publish_control('stop')
         self.goal = None
         msg = '目标已清除' + ('（已让导航就地停车、回到等待状态）' if stopped else '')
         self.get_logger().info(msg)
@@ -393,6 +419,8 @@ class PhoneTeleop(MapViewer):
             return {'ok': False, 'msg': '多点导航正在执行（先「清除目标」取消再重排）'}
         if not self.wp_queue:
             return {'ok': False, 'msg': '队列为空：先在多点模式下点地图排队'}
+        if self.robot_pose(max_age=2.0) is None:
+            return {'ok': False, 'msg': '定位 map→odom 超过 2 秒未更新；航点未发送'}
         ac = self._wp_client()
         if not ac.wait_for_server(timeout_sec=3.0):
             return {'ok': False,
@@ -406,6 +434,7 @@ class PhoneTeleop(MapViewer):
             ps.pose.orientation.w = 1.0
             g.poses.append(ps)
         self.set_cmd(0.0, 0.0)
+        self.publish_control('nav')
         self.goal = None
         fut = ac.send_goal_async(g, feedback_callback=self._wp_feedback)
         t0 = time.time()
@@ -584,6 +613,8 @@ class PhoneTeleop(MapViewer):
                   else ('执行中 %d/%d' % (self.wp_cur + 1, self.wp_n)
                         if self.wp_running else None),
             'mode': self.modes.snapshot(),      # {'mode','holder'}：四屏互斥状态
+            'battery': self.battery,
+            'map_id': self.current_map_id(),
             'patrol': self.patrol.status(),     # 屏3 数据源：cur/total/per/elapsed/eta/running/paused
             'view': ('%.1f m%s' % (rng, ('，偏移 %.1f/%.1f' % (ox, oy))
                                    if abs(ox) > 0.05 or abs(oy) > 0.05 else '')),

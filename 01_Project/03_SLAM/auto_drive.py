@@ -60,6 +60,12 @@ except ImportError as e:
 RATE = 20.0         # 控制/发布循环频率 Hz（须 > 看门狗 1/cmd_timeout）
 ODOM_TIMEOUT = 1.5  # /odom 断流判据（秒）
 
+# ---- 航向闭环（drive 用，2026-10-16 加）----
+# 实测：开环直行 5 m 车头会漂 11~15°（左右轮速差 ≈1.7%），横向偏 0.4~0.6 m。
+HEAD_K_TH = 3.0     # 航向偏差增益（rad/s per rad）；稳态偏差 = 扰动/增益
+HEAD_K_LAT = 0.5    # 横向偏差增益（rad/s per m），倒车时自动反号
+W_MIN = 0.20        # 最小有效角速度 rad/s —— 必须高于底盘死区（≈0.15，见 turn()）
+
 
 class Abort(Exception):
     """需要立即停车退出的异常"""
@@ -77,10 +83,11 @@ def wrap(a):
 class AutoDriver(Node):
     """闭环速度控制：按距离/角度分段行驶，全程由 /odom 反馈判定到位"""
 
-    def __init__(self, v_fwd, v_turn):
+    def __init__(self, v_fwd, v_turn, heading_hold=True):
         super().__init__('auto_drive')
         self.v_fwd = v_fwd
         self.v_turn = v_turn
+        self.heading_hold = heading_hold   # 航向闭环开关（--no-heading 可关，便于 A/B）
         self.pose = None            # (x, y, yaw) 当前里程计位姿
         self.last_odom = 0.0        # 最近一帧 /odom 到达时刻（本地时钟）
         self.start_pose = None      # 本轮起点（供 home 用）
@@ -138,23 +145,49 @@ class AutoDriver(Node):
         t_start = time.time()
         timeout = target / self.v_fwd * 3.0 + 5.0
         prog = lat = 0.0
+        debt = 0.0                     # 航向修正"欠账"（rad），见下方调制说明
+        t_prev = time.time()
 
         while True:
             self.spin_once()
             self.check_alive()
-            if time.time() - t_start > timeout:
+            now = time.time()
+            if now - t_start > timeout:
                 raise Abort('直行 %.2fm 超时（%.0fs，被挡住或打滑？）'
                             % (dist, timeout))
+            dt = min(0.5, max(1e-3, now - t_prev))
+            t_prev = now
             x, y, th = self.pose
             dx, dy = x - x0, y - y0
-            prog = dx * math.cos(th0) + dy * math.sin(th0)   # 沿初始朝向位移
+            prog = dx * math.cos(th0) + dy * math.sin(th0)   # 沿初始朝向位移（带符号）
             lat = -dx * math.sin(th0) + dy * math.cos(th0)   # 横向偏差
-            err = target - prog
+            # ⚠ 必须取绝对值：target = abs(dist)，而后退时 prog 是**负的**
+            #   （0 → -5）。写 target - prog 会变成 5-(-5)=10 且越跑越大，
+            #   退出条件永远不成立 → 车一直后退到超时才停（straight 预设的返程段就是 -dist）
+            err = target - abs(prog)
             if err <= tol:
                 break
             v = min(self.v_fwd, max(0.04, 1.2 * err))        # 临近目标减速
-            ramp = min(1.0, (time.time() - t_start) / 0.5)   # 起步升速斜坡
-            self.send(sign * v * ramp, 0.0)
+            ramp = min(1.0, (now - t_start) / 0.5)           # 起步升速斜坡
+
+            # ---- 航向闭环 ----
+            # ⚠ 底盘 ω 有死区（≈0.15 rad/s）：抵消 1.7% 轮速差只需 0.006 rad/s，
+            #   直接发这么小的值底盘**根本不转**，线性 P 等于没有。
+            #   做法：算出期望的**平均** ω，再用「欠账 + 最小脉冲」调制成 ±W_MIN 的脉冲串
+            #   （delta-sigma）—— 平均值等于期望值，且每个脉冲都在死区之上。
+            wz = 0.0
+            if self.heading_hold:
+                e_th = wrap(th0 - th)                            # >0 表示车头偏右，要左转
+                cmd = HEAD_K_TH * e_th - sign * HEAD_K_LAT * lat  # 倒车时横向修正反号
+                cmd = max(-self.v_turn, min(self.v_turn, cmd))
+                pulse = W_MIN * dt                               # 一个周期以 W_MIN 转过的角度
+                debt += cmd * dt
+                if debt >= pulse:
+                    wz, debt = W_MIN, debt - pulse
+                elif debt <= -pulse:
+                    wz, debt = -W_MIN, debt + pulse
+
+            self.send(sign * v * ramp, wz)
 
         self.stop(0.2)
         return prog, lat
@@ -294,6 +327,8 @@ def main():
                     help='前进速度 m/s（默认 0.15，建议 ≤0.2）')
     ap.add_argument('-w', '--turn-rate', type=float, default=0.4,
                     help='转向角速度 rad/s（默认 0.4）')
+    ap.add_argument('--no-heading', action='store_true',
+                    help='关闭航向闭环（退回开环直行，用于 A/B 对比：实测会漂 0.4~0.6 m/5 m）')
     ap.add_argument('--dry-run', action='store_true', help='只打印计划，不动车')
     ap.add_argument('--no-countdown', action='store_true', help='跳过 3 秒倒计时')
     args = ap.parse_args()
@@ -321,7 +356,7 @@ def main():
         return 0
 
     rclpy.init()
-    node = AutoDriver(args.speed, args.turn_rate)
+    node = AutoDriver(args.speed, args.turn_rate, not args.no_heading)
     if not node.wait_odom(5.0):
         print('未收到 /odom —— 请先启动底盘节点（car），并用 odomhz 确认有数据。')
         node.destroy_node()

@@ -13,6 +13,9 @@
 #   ~/RobotCode/start_robot.sh --vision            视觉全链路：cam_pub + rknn_infer + 四屏UI
 #                                                  （= --ui --cam + yolo；手机 hub 屏 → /cam.mjpg
 #                                                   实时检测画面，《13》P3）
+#   ~/RobotCode/start_robot.sh --ekf               启用 EKF 融合（卡-02：轮速+IMU）
+#                                                  → odom→base_link 改由 EKF 发布，底盘自动停发 TF
+#                                                  （可与 --nav2 组合：robotnav --nav2 --ui --ekf）
 #   ~/RobotCode/start_robot.sh --dry-run           只做预检查，不启动
 #   ~/RobotCode/start_robot.sh --stop              急停（先发零速度，再收掉所有节点）
 #
@@ -52,6 +55,7 @@ stop_all() {
     pkill -INT -f 'nav2.launch.py'           2>/dev/null; sleep 0.5
     pkill -INT -f 'lib/nav2_'                2>/dev/null; sleep 0.5
     pkill -INT -f 'nav2_goal_bridge'         2>/dev/null; sleep 0.5
+    pkill -INT -f '/control_mux.py'          2>/dev/null; sleep 0.2
     # 视觉链路（--vision 拉起的三件套 + 可能残留的旧版手机遥控）
     pkill -INT -f 'phone_teleop.py'          2>/dev/null; sleep 0.5
     pkill -INT -f 'robot_ui.app'             2>/dev/null; sleep 0.3
@@ -105,6 +109,8 @@ NAV2=0
 UI=0
 CAM=0
 VISION=0
+EKF=0
+BAG=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --stop)     stop_all; exit 0 ;;
@@ -114,10 +120,15 @@ while [ $# -gt 0 ]; do
         --ui)       UI=1; shift ;;
         --cam)      CAM=1; shift ;;            # 只开相机（cam_pub），配合 --ui 用
         --vision)   UI=1; CAM=1; VISION=1; shift ;;   # = --ui --cam + yolo 检测
+        --ekf)      EKF=1; shift ;;            # 启用 EKF 融合（卡-02）：odom→base_link 改由 EKF 发布
+        --bag)      BAG=1; shift ;;            # 录制控制权、速度链路和定位话题
         --dry-run)  DRY=1; shift ;;
-        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --nav2 / --ui / --cam / --vision / --dry-run / --stop）"; exit 2 ;;
+        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --nav2 / --ui / --cam / --vision / --ekf / --bag / --dry-run / --stop）"; exit 2 ;;
     esac
 done
+# EKF 开关转成 launch 参数（bringup 里 ekf:=true 会同时让底盘 publish_tf=False，避免双发布）
+EKF_ARG=false
+[ "$EKF" = "1" ] && EKF_ARG=true
 if [ "$CAM" = "1" ] && [ "$UI" = "0" ] && [ "$VISION" = "0" ]; then
     say "提示：--cam 只开相机（cam_pub），没配 --ui/--vision 时页面看不到画面；继续启动。"
 fi
@@ -182,8 +193,10 @@ if [ "$UI" = "1" ] || [ "$CAM" = "1" ]; then
         nohup ros2 run rknn_infer rknn_infer > /tmp/rknn_infer.log 2>&1 &
     fi
     if [ "$UI" = "1" ]; then
+        UI_TOPIC="/cmd_vel"
+        [ "$NAV2" = "1" ] && UI_TOPIC="/cmd_vel_manual"
         ( cd "$HOME/RobotCode/01_Project/03_SLAM" && \
-          nohup python3 -m robot_ui.app    > /tmp/robot_ui.log    2>&1 & )
+          nohup python3 -m robot_ui.app -t "$UI_TOPIC" > /tmp/robot_ui.log 2>&1 & )
     fi
     sleep 2
     ok_ui=1
@@ -212,7 +225,7 @@ if [ "$NAV" = "1" ]; then
     [ "$MODE" = "localization" ] || say "提示：--nav 通常与 --mode localization 一起用（当前 mode=$MODE）"
     say "启动中 ...（含导航监听：手机点地图即出发、可连续点；Ctrl-C 停止全部）"
     say "日志落盘：tail -f /tmp/nav2_live.log"
-    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav:=true phone:="$PHONE_ARG" 2>&1 | tee /tmp/nav2_live.log
+    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav:=true phone:="$PHONE_ARG" ekf:="$EKF_ARG" bag:="$BAG" 2>&1 | tee /tmp/nav2_live.log
     exit 0
 fi
 
@@ -221,9 +234,9 @@ if [ "$NAV2" = "1" ]; then
     [ "$MODE" = "localization" ] || say "提示：--nav2 通常与 --mode localization 一起用（当前 mode=$MODE）"
     say "启动中 ...（nav2 全栈 + 手机点地图即出发；Ctrl-C 停止全部）"
     say "日志落盘：tail -f /tmp/nav2_live.log"
-    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav2:=true phone:="$PHONE_ARG" 2>&1 | tee /tmp/nav2_live.log
+    ros2 launch robot_bringup bringup.launch.py mode:="$MODE" nav2:=true phone:="$PHONE_ARG" ekf:="$EKF_ARG" bag:="$BAG" 2>&1 | tee /tmp/nav2_live.log
     exit 0
 fi
 say "启动中 ...（Ctrl-C 停止全部）"
 say "日志落盘：tail -f /tmp/nav2_live.log"
-ros2 launch robot_bringup bringup.launch.py mode:="$MODE" phone:="$PHONE_ARG" 2>&1 | tee /tmp/nav2_live.log
+ros2 launch robot_bringup bringup.launch.py mode:="$MODE" phone:="$PHONE_ARG" ekf:="$EKF_ARG" bag:="$BAG" 2>&1 | tee /tmp/nav2_live.log

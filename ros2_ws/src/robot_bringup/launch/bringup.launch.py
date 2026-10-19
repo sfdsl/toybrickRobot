@@ -36,7 +36,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
                             IncludeLaunchDescription, LogInfo)
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -53,6 +53,7 @@ def generate_launch_description():
     view = LaunchConfiguration('view')
     nav = LaunchConfiguration('nav')
     nav2 = LaunchConfiguration('nav2')
+    ekf = LaunchConfiguration('ekf')
     bag = LaunchConfiguration('bag')
     bag_dir = LaunchConfiguration('bag_dir')
 
@@ -73,14 +74,26 @@ def generate_launch_description():
         #   手机网页点目标 → /goal_pose → nav2_goal_bridge（净化）→ navigate_to_pose。
         DeclareLaunchArgument('nav2', default_value='false',
                               description='启动 nav2 全栈（默认 false；开启时自动忽略 nav）'),
+        DeclareLaunchArgument('ekf', default_value='false',
+                              description='启动 robot_localization EKF（卡-02：轮速+IMU 融合）'
+                                          '；开启后 odom→base_link 改由 EKF 发布'),
         DeclareLaunchArgument('bag', default_value='false', description='是否同时录 rosbag'),
         DeclareLaunchArgument('bag_dir', default_value=DEFAULT_BAG_DIR,
                               description='rosbag 输出目录'),
     ]
 
     # 1) 底盘
+    #   ⚠ 卡-02 禁止行为：odom→base_link 只能由**一个**节点发布。
+    #     ekf:=false → 底盘发（现状，兼容旧流程）
+    #     ekf:=true  → 底盘停发，改由 EKF 发（否则两个发布者互相打架）
     chassis = Node(package='base_driver', executable='chassis_node',
-                   name='base_driver', output='screen')
+                   name='base_driver', output='screen',
+                   parameters=[{'publish_tf': True}],
+                   condition=UnlessCondition(ekf))
+    chassis_no_tf = Node(package='base_driver', executable='chassis_node',
+                         name='base_driver', output='screen',
+                         parameters=[{'publish_tf': False}],
+                         condition=IfCondition(ekf))
 
     # 2) 雷达（含 base_link→base_laser 静态 TF）
     lidar = IncludeLaunchDescription(
@@ -102,7 +115,9 @@ def generate_launch_description():
     # 4) 手机遥控网页（含「保存地图」按钮与地图点选目标）
     phone_proc = ExecuteProcess(
         cmd=['python3', os.path.join(SLAM_TOOLS, 'phone_teleop.py'),
-             '-p', port, '-r', view],
+             '-p', port, '-r', view, '-t',
+             PythonExpression(["'cmd_vel_manual' if '", nav2,
+                               "' == 'true' else 'cmd_vel'"])],
         output='screen',
         condition=IfCondition(phone),
     )
@@ -127,10 +142,21 @@ def generate_launch_description():
         condition=IfCondition(nav2),
     )
 
+    # 5c) 可选：EKF 融合（卡-02）—— /odom + /imu/data → /odometry/filtered
+    #     与底盘联动：ekf:=true 时 L2 用 chassis_no_tf（底盘停发 TF），TF 交给 EKF
+    ekf_stack = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ekf.launch.py')),
+        condition=IfCondition(ekf),
+    )
+
     # 6) 可选：录包（复盘用）
     bag_proc = ExecuteProcess(
         cmd=['ros2', 'bag', 'record', '-o', bag_dir,
-             '/scan', '/odom', '/tf', '/tf_static', '/cmd_vel', '/map'],
+             '/scan', '/odom', '/tf', '/tf_static', '/map',
+             '/goal_pose', '/cmd_vel_raw', '/cmd_vel_nav',
+             '/cmd_vel_manual', '/cmd_vel_muxed', '/cmd_vel',
+             '/control/command', '/emergency_stop', '/battery'],
         output='screen',
         condition=IfCondition(bag),
     )
@@ -138,9 +164,11 @@ def generate_launch_description():
     banner = LogInfo(msg=['一键启动（launch）：mode=', mode,
                           ' ｜ 导航监听 nav=', nav,
                           ' ｜ nav2 栈 nav2=', nav2,
+                          ' ｜ EKF 融合 ekf=', ekf,
                           ' ｜ 手机网页端口 ', port,
                           ' ｜ Ctrl-C 停止全部'])
 
-    return LaunchDescription(declared + [banner, chassis, lidar,
+    return LaunchDescription(declared + [banner, chassis, chassis_no_tf, lidar,
                                          slam_mapping, slam_localization,
-                                         phone_proc, nav_proc, nav2_stack, bag_proc])
+                                         phone_proc, nav_proc, nav2_stack, ekf_stack,
+                                         bag_proc])

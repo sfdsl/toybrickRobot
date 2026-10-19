@@ -4,8 +4,8 @@
 
 为什么需要它：
     手机网页（phone_teleop.py）和命令行都是往 `/goal_pose` 发 `PoseStamped`；
-    而 nav2 只认 **action**（`navigate_to_pose`），话题目标是不会触发导航的。
-    本节点做这层桥接 —— **手机页面零改动**，点一下照样走。
+    Humble 的 bt_navigator 也订阅 /goal_pose；launch 把其订阅重映射到
+    /nav2_direct_goal_pose，网页目标只交给本桥接器，再转换成 action。
 
 行为（对齐自研 goal_nav.py 的语义）：
     · 收到新目标 → 导航过去
@@ -21,13 +21,16 @@
     python3 nav2_goal_bridge.py --goal-topic /test_goal_pose    # 隔离自测，不碰真机
 """
 import argparse
+import math
 import os
 import sys
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, Twist
-from std_msgs.msg import Bool
-from nav2_simple_commander.robot_navigator import BasicNavigator
+from std_msgs.msg import Bool, String
+from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+from rclpy.time import Time
+from tf2_ros import Buffer, TransformListener
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # 能 import 到同目录的 goal_nav
 
@@ -42,6 +45,9 @@ class GoalBridge(BasicNavigator):
         self.pending_goal = None
         self.estop = False
         self.active = False
+        self.goal_xy = None
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         self.snap = snap
         self.gn = None
 
@@ -55,6 +61,7 @@ class GoalBridge(BasicNavigator):
         self.create_subscription(PoseStamped, goal_topic, self._on_goal, 10)
         self.create_subscription(Bool, estop_topic, self._on_estop, 10)
         self.cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
+        self.control_pub = self.create_publisher(String, '/control/command', 10)
 
         self.get_logger().info(
             'nav2 目标桥接就绪：%s → navigate_to_pose ｜ 零速 %s ｜ 急停 %s ｜ 目标点净化 %s'
@@ -97,6 +104,25 @@ class GoalBridge(BasicNavigator):
         self.get_logger().info('目标点贴障碍 → 吸附到 (%.2f, %.2f)：离障 ≥ 膨胀半径，车停得进去' % w)
         goal.pose.position.x, goal.pose.position.y = w[0], w[1]
         return goal
+
+    def fresh_pose(self):
+        """Reject action dispatch/result when localization has stopped updating."""
+        try:
+            localization = self.tf_buffer.lookup_transform('map', 'odom', Time())
+            age = (self.get_clock().now() - Time.from_msg(localization.header.stamp)).nanoseconds / 1e9
+            if not (-1.0 <= age <= 2.0):
+                return None
+            return self.tf_buffer.lookup_transform('map', 'base_link', Time())
+        except Exception:
+            return None
+
+    def reject_goal(self, reason):
+        self.get_logger().error(reason)
+        if self.active:
+            self.cancel()
+        self.goal_xy = None
+        self.control_pub.publish(String(data='stop'))
+        self.stop_now()
 
     # ---------- 主循环里调用 ----------
     def stop_now(self):
@@ -157,21 +183,34 @@ def main():
             if nav.pending_goal is not None:
                 goal = nav.pending_goal
                 nav.pending_goal = None
+                if nav.fresh_pose() is None:
+                    nav.reject_goal('定位 map→odom 未更新，拒绝导航目标')
+                    continue
                 goal = nav.purify(goal)      # 贴障碍的目标先吸附（自研同口径）
                 if nav.active:
                     nav.get_logger().info('行驶中收到新目标 → 改道')
                     nav.cancel()
                 if nav.goToPose(goal):
                     nav.active = True
+                    nav.goal_xy = (goal.pose.position.x, goal.pose.position.y)
                 else:
                     nav.get_logger().error('目标被 nav2 拒绝')
 
             # 3) 任务完成
             if nav.active and nav.isTaskComplete():
                 nav.active = False
-                res = nav.getFeedback()      # 可能 None，仅用于日志
-                nav.get_logger().info('✓ 导航任务结束，等待下一个目标'
-                                      + ('' if res is None else ''))
+                pose = nav.fresh_pose()
+                if nav.getResult() != TaskResult.SUCCEEDED:
+                    nav.reject_goal('导航任务结束，但结果不是成功：%s' % nav.getResult())
+                elif pose is None or nav.goal_xy is None:
+                    nav.reject_goal('Nav2 报成功，但定位已过期；拒绝到达判定')
+                else:
+                    x, y = pose.transform.translation.x, pose.transform.translation.y
+                    error = math.hypot(x - nav.goal_xy[0], y - nav.goal_xy[1])
+                    if error > 0.30:
+                        nav.reject_goal('Nav2 报成功，但实际距目标 %.2f m；拒绝到达判定' % error)
+                    else:
+                        nav.get_logger().info('✓ 导航到达，距目标 %.2f m' % error)
     except KeyboardInterrupt:
         try:
             nav.stop_now()      # 趁 context 还活着，第一时间停车

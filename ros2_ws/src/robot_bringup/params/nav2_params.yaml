@@ -141,7 +141,7 @@ controller_server:
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
-    # P18：双控制器并存。FollowPath=MPPI（默认，绕障更顺）；FollowPathDWB=原 RotationShim+DWB
+    # P18：双控制器并存。FollowPath=MPPI（默认）；FollowPathDWB=原 RotationShim+DWB
     # （P11~P17 调参成果完整保留）。BT 默认用 FollowPath；要回退 DWB 时把两个键名互换即可。
     controller_plugins: ["FollowPath", "FollowPathDWB"]
 
@@ -165,14 +165,21 @@ controller_server:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.20
-      yaw_goal_tolerance: 0.50          # ≈±29°（原 10°）
+      # ⚠ P35（2026-10-19 实测）：yaw 0.50（±29°）**不够**。
+      #   起因：手机 set_goal 写死 orientation.w=1.0 → 目标朝向恒为 0°；
+      #   而车从对侧到达时车头≈180°，实测差 153.5°，远超 29° → goal checker
+      #   永不判到达 → 控制器在目标点原地小幅来回拧（v≈0，ω 在 ±0.1~0.3 抖动），
+      #   再被底盘 wz_boost(0.15→0.18) 放大成肉眼可见的"转圈"。
+      #   → 放宽到 3.15 rad(≈181°) = **只判位置到位**，与 P22"位置到位即可"的本意一致。
+      #   若以后要让车到点后朝向某方向，应改 set_goal 发真实 yaw，而不是靠这里收紧。
+      yaw_goal_tolerance: 3.15
 
     # ⚠ 切换 DWB（原 RPP）：RPP 是"纯路径跟随"，只有贴障碍降速，**没有绕障能力**——
     #   纸箱挡路时它只会沿着全局路径撞过去，然后被 collision_monitor 拦停 / progress 失败。
     #   DWB 对一堆候选轨迹打分，其中 BaseObstacleCritic 用 local_costmap 的**实时雷达**
     #   数据，能自己挑一条绕开的路。参数按本机口径配：0.15 m/s 慢速 + 差速底盘（不横移）。
     # ================================================================
-    # FollowPath = MPPI（P18 默认控制器）
+    # FollowPath = MPPI（默认控制器）
     #   为什么换：DWB 是"采样→打分→挑最低分"，高速轨迹前瞻长、更容易扫到致命格被否决
     #   → 贴障时只剩慢轨迹可挑（实测反复 Failed to make progress，spin/backup 都只是挣扎）。
     #   MPPI 每周期采样数百条噪声轨迹做温度加权优化，critics 软硬结合（repulsion 软排斥 +
@@ -180,17 +187,10 @@ controller_server:
     #   本机口径：4Hz、DiffDrive（不横移）、v≤0.20、ω≤0.80（底盘死区 0.15）。
     # ================================================================
     FollowPath:
-      # P29：shim 恢复（P21 参数）。复盘：P25 重开死区 critic 引入蛇行，P26/P27/P28
-      #   在控制层绕（smoother/wz_std/repulsion/去 shim）越调越差；蛇行的根因是
-      #   "解滑进底盘 ω 死区 + 死区 critic 强推大 ω"的组合。P29 在 base_driver 做
-      #   死区补偿后，上层的死区 critic 不再需要（恢复 P19 关闭态），shim 恢复原参数。
-      plugin: "nav2_rotation_shim_controller::RotationShimController"
-      primary_controller: "nav2_mppi_controller::MPPIController"
-      angular_dist_threshold: 0.785           # 偏差 >45° 先原地转正
-      forward_sampling_distance: 0.5
-      rotate_to_heading_angular_vel: 0.8      # 远高于底盘死区 0.15
-      max_angular_accel: 2.0
-      simulate_ahead_time: 1.0
+      # P38：每秒重规划都会给 RotationShim 新路径；它可在接近目标时夺回控制，
+      #   发 0.8 rad/s 原地转向。改为直接 MPPI，由局部轨迹连续控制转向。
+      #   原 RotationShim+DWB 仍保留在 FollowPathDWB 供对比。
+      plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 12
       model_dt: 0.25                    # ⚠ 必须 ≥ 控制周期(4Hz→0.25s)，否则 configure 直接报错
                                         #   12 × 0.25 = 3.0 s 前瞻
@@ -231,8 +231,16 @@ controller_server:
       ObstaclesCritic.near_goal_distance: 0.5
       GoalCritic.enabled: True
       GoalCritic.cost_weight: 5.0
+      # P38：GoalCritic 在 0.5 m 内接手；与 PathFollowCritic 的停止距离一致。
+      #   预测时域 3 s × 最高 0.20 m/s = 0.60 m，先保留 0.5 m 接力距离。
       GoalCritic.threshold_to_consider: 0.5
-      GoalAngleCritic.enabled: True
+      # ⚠ P36（2026-10-19 实测）：关掉。手机 set_goal 把目标朝向写死 yaw=0
+      #   （node_teleop.py:  orientation.w = 1.0），而车到点时的实际朝向是任意的；
+      #   本 critic 会拼命把车头转到 0°，与"走到点上"互相拉扯 →
+      #   接近目标时反复修正位姿、磨蹭不停（再被底盘 wz_boost 放大成可见抖动）。
+      #   既然 yaw_goal_tolerance 已放宽到 3.15（只判位置），朝向本就无所谓 → 关掉。
+      #   若将来要让车到点后朝向某方向，应改 set_goal 发真实 yaw，再把这里打开。
+      GoalAngleCritic.enabled: False
       # P22：weight 3→1.5、threshold 0.5→0.25。原配置在终点前 0.5 m 就开始死拉朝向，
       #   与周围障碍排斥对撞 → 磨成 0.01 m/s。现在"先到位、最后再小幅对准"。
       GoalAngleCritic.cost_weight: 1.5
@@ -246,7 +254,9 @@ controller_server:
       PathFollowCritic.enabled: True
       PathFollowCritic.cost_weight: 5.0
       PathFollowCritic.offset_from_furthest: 5
-      PathFollowCritic.threshold_to_consider: 1.4
+      # P38：原值 1.4 m 使路径前进评分过早关闭，而 GoalCritic 到 0.5 m 才启用；
+      #   两者间有 0.9 m 的前进驱动断档。统一在 0.5 m 交接。
+      PathFollowCritic.threshold_to_consider: 0.5
       PathAngleCritic.enabled: True
       PathAngleCritic.cost_weight: 1.0  # P19：2→1。窄道里它把车头钉在路径切线上，与两侧
                                         #   ObstaclesCritic 排斥力来回拉扯 → 摆头；降权放宽

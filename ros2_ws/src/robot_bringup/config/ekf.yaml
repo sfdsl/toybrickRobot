@@ -1,0 +1,78 @@
+# robot_localization EKF —— 轮速里程计 + IMU 融合
+#
+# 对应：卡-02《EKF 轮速+IMU 融合》
+#       实施步骤见 02_doc/05_实施清单/卡-02-EKF融合-实施清单.md §5
+#
+# 数据流：
+#   /odom      (base_driver，20 Hz，轮速积分)  ┐
+#   /imu/data  (imu_driver，100 Hz，ICM-42670) ┴→ EKF → /odometry/filtered + TF odom→base_link
+#
+# ⚠ 卡-02 禁止行为：odom→base_link 只能由一个节点发布。
+#    启用本文件时必须让 base_driver 停发 TF（bringup.launch.py 里 ekf:=true 时自动把
+#    chassis 的 publish_tf 置 false），否则两个发布者会互相打架。
+#
+# 参数定版：2026-10-15
+
+ekf_filter_node:
+  ros__parameters:
+
+    # ---------------- 基本 ----------------
+    frequency: 30.0                  # EKF 输出频率（≥ 轮速 20 Hz 即可）
+    two_d_mode: true                 # 平面室内车 → 强制 2D，z/roll/pitch 不参与
+    sensor_timeout: 0.1              # 某传感器超时即不再使用它
+    transform_time_offset: 0.0
+    transform_timeout: 0.2
+    print_diagnostics: true          # 调优期打开（看协方差是否发散）；稳定后可关，省 CPU
+
+    # ---------------- 坐标系 ----------------
+    odom_frame: odom
+    base_link_frame: base_link       # 本机无 base_footprint（与卡-01 一致）
+    world_frame: odom                # 无 GPS / 无绝对定位 → world 就是 odom
+    map_frame: map
+
+    # ---------------- 输入 1：轮速里程计 ----------------
+    # 融合 x, y, yaw 三个绝对量（本项目实测轮速短时航向精度很好：
+    # 360° 自转实测 359.6°，方形闭环 Δy 仅 1 mm，见《05_实验记录与结论》）
+    odom0: /odom
+    odom0_config: [true,  true,  false,     # x, y, z
+                   false, false, true,      # roll, pitch, yaw
+                   false, false, false,     # vx, vy, vz
+                   false, false, false]     # vroll, vpitch, vyaw
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+    odom0_nodelay: false
+
+    # ---------------- 输入 2：IMU ----------------
+    # 只融合 vyaw（陀螺 z 轴角速度）—— 高频平滑交给它，长时绝对量由轮速拉回。
+    #
+    # 为什么**不**融合 IMU 的线性加速度（卡-02「需要人工确认」第 2 条）：
+    #   轮式车没有外部位置参考，加速度二次积分必然快速漂移，融合进去只会更差。
+    # 为什么**不**融合 IMU 的 yaw（姿态）：
+    #   本节点不发 orientation（无姿态解算，orientation_covariance[0] = -1）。
+    imu0: /imu/data
+    imu0_config: [false, false, false,      # x, y, z
+                  false, false, false,      # roll, pitch, yaw
+                  false, false, false,      # vx, vy, vz
+                  false, false, true]       # vroll, vpitch, vyaw ← 只这个
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 20
+    imu0_remove_gravitational_acceleration: true
+
+    # ---------------- 输出 ----------------
+    publish_tf: true                 # ★ 由 EKF 统一发布 odom→base_link
+    publish_acceleration: false
+    use_control: false
+
+    # ---------------- 协方差（卡-02 业务规则：必须合理设定，绝不能全 0）----------------
+    # 输入端的协方差来自消息本身（都已非零）：
+    #   /odom     由 base_driver 发布：pose [0]=0.02(x) [7]=0.02(y) [35]=0.05(yaw)
+    #   /imu/data 由 imu_driver 发布：angular_velocity 对角线 = 0.01
+    # 实测定值见 kalibr 结果（02_doc/05_实施清单 里记录）：
+    #   陀螺零偏 [x,y,z] rad/s = 见 bringup.launch.py 的 gyro_bias 传参
+    #
+    # 若实测发现航向漂移大，可切换为「IMU 提供 yaw，轮速只给位置」：
+    #   odom0_config: [true, true, false,  false,false,false,  false,false,false,  false,false,false]
+    #   imu0_config:  [false,false,false,  false,false,true,   false,false,false,  false,false,true]
+    #   ← 每次改动都要记进《卡-02 实施清单》§7 参数变更记录（卡-02 业务规则）

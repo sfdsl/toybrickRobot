@@ -36,7 +36,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction,
                             LogInfo, SetEnvironmentVariable)
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterFile
@@ -125,12 +125,15 @@ def generate_launch_description():
         Node(package='nav2_behaviors', executable='behavior_server',
              name='behavior_server', output='screen',
              parameters=[configured_params],
-             remappings=remappings),
+             remappings=remappings + [('cmd_vel', 'cmd_vel_raw')]),
         # 5) 行为树导航器（对外是 navigate_to_pose action）
         Node(package='nav2_bt_navigator', executable='bt_navigator',
              name='bt_navigator', output='screen',
              parameters=[configured_params],
-             remappings=remappings),
+             # Humble bt_navigator also subscribes to /goal_pose itself.
+             # Isolate that convenience topic: the bridge is the sole receiver
+             # of web goals, so one click creates exactly one Nav2 action.
+             remappings=remappings + [('goal_pose', 'nav2_direct_goal_pose')]),
         # 6) 多航点巡检（自研没有的能力）
         Node(package='nav2_waypoint_follower', executable='waypoint_follower',
              name='waypoint_follower', output='screen',
@@ -150,7 +153,18 @@ def generate_launch_description():
                          {'node_names': LIFECYCLE_NODES}]),
     ]
 
-    # 9) 硬安全层：cmd_vel_nav → cmd_vel（前方减速/急停）
+    # 8b) 人工速度与 Nav2 速度互斥，再统一进入 collision_monitor。
+    mux_common = ['python3', os.path.join(SLAM_TOOLS, 'control_mux.py'),
+                  '--nav-topic', 'cmd_vel_nav', '--manual-topic', 'cmd_vel_manual',
+                  '--out-topic']
+    mux_with_monitor = ExecuteProcess(
+        cmd=mux_common + ['cmd_vel_muxed'], output='screen',
+        condition=IfCondition(collision))
+    mux_without_monitor = ExecuteProcess(
+        cmd=mux_common + [cmd_vel_out], output='screen',
+        condition=UnlessCondition(collision))
+
+    # 9) 硬安全层：cmd_vel_muxed → cmd_vel（前方减速/急停）
     collision_node = Node(
         package='nav2_collision_monitor', executable='collision_monitor',
         name='collision_monitor', output='screen',
@@ -176,7 +190,7 @@ def generate_launch_description():
     # 10) /goal_pose → nav2 action（手机页面零改动）
     bridge_proc = ExecuteProcess(
         cmd=['python3', os.path.join(SLAM_TOOLS, 'nav2_goal_bridge.py'),
-             '--goal-topic', goal_topic, '--cmd-topic', cmd_vel_out],
+             '--goal-topic', goal_topic, '--cmd-topic', 'cmd_vel_manual'],
         output='screen',
         condition=IfCondition(bridge),
     )
@@ -203,4 +217,5 @@ def generate_launch_description():
         + declared
         + [banner]
         + nodes
-        + [collision_node, safety_manager, bridge_proc, watchdog_proc])
+        + [mux_with_monitor, mux_without_monitor,
+           collision_node, safety_manager, bridge_proc, watchdog_proc])

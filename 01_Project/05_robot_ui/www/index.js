@@ -31,7 +31,16 @@ pad.addEventListener('pointerdown', e=>{ active=true; pad.setPointerCapture(e.po
 pad.addEventListener('pointermove', e=>{ if(active) onMove(e); });
 ['pointerup','pointercancel'].forEach(t=>pad.addEventListener(t, e=>{
   active=false; setKnob(0,0,false); halt(); }));
-stopBtn.onclick=()=>{ active=false; setKnob(0,0,false); halt(); };
+// ⚠ 必须走 /stop，不能只发 /cmd?vx=0&wz=0：
+//   1) nav2 下一拍照样发 /cmd_vel_nav，control_mux 仍在转述它
+//      （ControlPolicy 只有收到**非零**人工指令才切 manual）→ 车不停；
+//   2) 巡逻中 /cmd 会被 ModeMgr 以 force_unless='PATROL' 拒成 409 → 完全没反应。
+//   /stop 会 cancel 巡逻 + 清航点 + clear_goal()（内含 publish_control('stop')，
+//   让 control_mux 立刻锁存零速）。
+stopBtn.onclick=()=>{ active=false; setKnob(0,0,false); halt();
+  fetch(withK('/stop')).then(r=>r.text())
+    .then(()=>showToast('已停止（导航 / 航点 / 巡逻已取消）',2500))
+    .catch(()=>showToast('✗ 停止失败：连不上服务',5000)); };
 
 // ---------------- 地图手势/缩放/点选：已组件化到 map.js ----------------
 // 点选回调 = 原 setGoalAt 双击复位之后的逻辑（双击复位/黑边判断在组件内）：
@@ -109,12 +118,27 @@ function applyKeys(){ if(active) return;
   if(dv||dw){ vx=dv*vmax*0.8; wz=dw*wmax*0.8; loop(); send(); }
   else { vx=0; wz=0; if(timer){clearInterval(timer); timer=null;} send(); } }
 
+// 电量：/battery 每 10 s 一次（P1 新增）。>30 s 标「旧」，≤20% 标红。
+// 注意 percentage 可能是 null（底盘报 NaN 时后端已转成 None），要兜住。
+function renderBattery(b){
+  const el=document.getElementById('batt');
+  if(!el) return;
+  if(!b){ el.textContent='-'; el.className=''; return; }
+  const age=Date.now()/1000-(b.stamp||0);
+  const hasPct=(typeof b.percentage==='number' && isFinite(b.percentage));
+  el.textContent=(hasPct?b.percentage.toFixed(0)+'%':'--%')
+                +' ｜ '+(b.voltage||0).toFixed(2)+' V'
+                +(age>30?' 旧':'');
+  el.className=(hasPct && b.percentage<=20)?'low':((age>30||!hasPct)?'dim':'');
+}
+
 // 状态推送（SSE）：断线由 EventSource 自动重连；onerror 时显示「断开」
 function renderState(s) {
   const d=document.getElementById('dot'), c=document.getElementById('conn');
   d.className='dot '+(s.cmd_age<1?'ok':'bad'); c.textContent=s.cmd_age<1?'已连接':'看门狗待机';
   document.getElementById('pose').textContent=s.pose||'-';
   document.getElementById('vel').textContent=s.vel||'-';
+  renderBattery(s.battery);
   document.getElementById('goal').textContent=(s.wp?('多点 '+s.wp+' ｜ '):'')+(s.goal||'-');
   if(s.view){ document.getElementById('zoom').textContent=s.view;
               if(mapView.view.range===null){ mapView.view.range=s.view_range||8.0; mapView.view.dx=0; mapView.view.dy=0; } }

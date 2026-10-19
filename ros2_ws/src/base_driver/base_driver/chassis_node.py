@@ -38,11 +38,13 @@ base_driver 底盘节点：/cmd_vel ⇄ 串口 ⇄ /odom + TF
 """
 
 import math
+import re
 import time
 
 import rclpy
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import BatteryState
 from rclpy.node import Node
 from tf2_ros import TransformBroadcaster
 
@@ -50,6 +52,17 @@ import serial
 
 # 指令结尾 CR + LF（协议要求，等价于常见的 "\r\n"）
 CRLF = bytes((13, 10))
+
+
+def parse_battery(text):
+    """Board format: 12.691V,54mA,100%,3,0mAh. Current sign is undocumented."""
+    match = re.search(r'([0-9]+(?:\.[0-9]+)?)V\s*,\s*[-+]?[0-9]+(?:\.[0-9]+)?mA\s*,\s*([0-9]+(?:\.[0-9]+)?)%', text)
+    if not match:
+        raise ValueError('电池响应格式未知: %r' % text)
+    voltage, percent = map(float, match.groups())
+    if not (0.0 < voltage < 30.0 and 0.0 <= percent <= 100.0):
+        raise ValueError('电池读数越界: %r' % text)
+    return voltage, percent / 100.0
 
 
 def clamp(v, lo, hi):
@@ -228,8 +241,10 @@ class ChassisNode(Node):
         # ---------------- ROS 接口 ----------------
         self.create_subscription(Twist, 'cmd_vel', self.on_cmd_vel, 10)
         self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
+        self.battery_pub = self.create_publisher(BatteryState, 'battery', 10)
         self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
         self.create_timer(1.0 / self.poll_rate, self.on_poll)
+        self.create_timer(10.0, self.on_battery)
 
         self.get_logger().info(
             'base_driver 就绪：轮询 %.0fHz | cmd 超时 %.2fs | ticks_per_meter=%.1f '
@@ -237,6 +252,23 @@ class ChassisNode(Node):
             % (self.poll_rate, self.cmd_timeout, self.ticks_per_meter, self.wheel_separation))
 
     # ---------------- /cmd_vel ----------------
+    def on_battery(self):
+        if self.ser is None:
+            return
+        try:
+            voltage, percentage = parse_battery(self.ser.query('BATTERY'))
+            msg = BatteryState()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.voltage = voltage
+            msg.percentage = percentage
+            msg.present = True
+            msg.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
+            msg.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_UNKNOWN
+            msg.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_UNKNOWN
+            self.battery_pub.publish(msg)
+        except Exception as e:
+            self.get_logger().warn('电池查询失败：%s' % e, throttle_duration_sec=30.0)
+
     def on_cmd_vel(self, msg):
         self.last_cmd_time = time.time()
         self.cmd_active = True

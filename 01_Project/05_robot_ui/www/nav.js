@@ -9,6 +9,8 @@ const KEY='wp_list_v1';
 let list=[];
 try{ list=JSON.parse(localStorage.getItem(KEY))||[]; }catch(_){ list=[]; }
 if(!Array.isArray(list)) list=[];
+let currentMapId=null;
+const placeEl=document.getElementById('places');
 // 循环开关状态持久化
 loopChk.checked = localStorage.getItem(KEY+'_loop')==='1';
 loopChk.onchange=()=>localStorage.setItem(KEY+'_loop', loopChk.checked?'1':'0');
@@ -51,13 +53,23 @@ function render(){
     const del=document.createElement('button'); del.className='s-del'; del.textContent='×';
     del.title='删除此点';
     del.onclick=()=>{ list.splice(i,1); save(); render(); };
+    const named=document.createElement('button'); named.className='s-mv'; named.textContent='存';
+    named.title='将该航点保存为地图地点';
+    named.onclick=async()=>{
+      const label=prompt('地点名称',p.name);
+      if(!label || !label.trim()) return;
+      try{
+        const s=await fetch(withK('/places/add?name='+encodeURIComponent(label.trim())+'&x='+p.x+'&y='+p.y)).then(r=>r.json());
+        showToast(s.ok?'地点已保存':'✗ '+s.msg,4000); if(s.ok) loadPlaces();
+      }catch(_){ showToast('✗ 保存地点失败',4000); }
+    };
     const up=document.createElement('button'); up.className='s-mv'; up.textContent='↑';
     up.title='上移'; up.disabled=(i===0);
     up.onclick=()=>{ [list[i-1],list[i]]=[list[i],list[i-1]]; save(); render(); };
     const dn=document.createElement('button'); dn.className='s-mv'; dn.textContent='↓';
     dn.title='下移'; dn.disabled=(i===list.length-1);
     dn.onclick=()=>{ [list[i+1],list[i]]=[list[i],list[i+1]]; save(); render(); };
-    row.append(badge, name, xy, dwell, del, up, dn);
+    row.append(badge, name, xy, dwell, named, del, up, dn);
     listEl.appendChild(row);
   });
   summary();
@@ -103,3 +115,35 @@ goBtn.onclick=()=>{
 };
 
 render();
+
+async function loadPlaces(){
+  try{
+    const s=await fetch('/places/list').then(r=>r.json());
+    placeEl.replaceChildren();
+    if(!s.ok){ placeEl.textContent=s.msg; return; }
+    currentMapId=s.map_id;
+    const saved=localStorage.getItem(KEY+'_map_id');
+    if(saved && saved!==currentMapId && list.length){
+      list=[]; save(); render(); showToast('地图已更换，旧航点已清空',6000);
+    }
+    localStorage.setItem(KEY+'_map_id',currentMapId);
+    for(const [name,p] of Object.entries(s.places)){
+      const row=document.createElement('div'); row.className='s-row';
+      const label=document.createElement('span'); label.className='s-name'; label.textContent=name;
+      const xy=document.createElement('span'); xy.className='s-xy'; xy.textContent='x '+fmt(p.x)+' · y '+fmt(p.y);
+      const go=document.createElement('button'); go.className='s-mv'; go.textContent='前往';
+      go.onclick=async()=>{
+        const v=await fetch(withK('/places/go?name='+encodeURIComponent(name)+'&map_id='+currentMapId)).then(r=>r.json());
+        showToast(v.ok?'已下发目标':'✗ '+v.msg,5000);
+      };
+      const del=document.createElement('button'); del.className='s-del'; del.textContent='×';
+      del.onclick=async()=>{
+        const v=await fetch(withK('/places/delete?name='+encodeURIComponent(name))).then(r=>r.json());
+        showToast(v.ok?'已删除':'✗ '+v.msg,4000); if(v.ok) loadPlaces();
+      };
+      row.append(label,xy,go,del); placeEl.appendChild(row);
+    }
+    if(!Object.keys(s.places).length) placeEl.textContent='尚无地点：航点行点击「存」';
+  }catch(_){ placeEl.parentElement.hidden=true; }
+}
+loadPlaces();

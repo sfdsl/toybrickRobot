@@ -18,13 +18,22 @@ def cmd(h, q):
         h._send(409, 'application/json; charset=utf-8',
                 json.dumps({'ok': False, 'msg': '✗ ' + mmsg}, ensure_ascii=False).encode('utf-8'))
         return
+    if vx != 0.0 or wz != 0.0:
+        h.node.patrol.cancel()
+        # A manual takeover cancels the old navigation task once; a fresh
+        # nonzero manual command below immediately claims the mux.
+        if h.node.goal is not None or h.node.wp_running:
+            h.node.wp_clear()
+            h.node.clear_goal()
     vx, wz = h.node.set_cmd(vx, wz)
     h._send(200, 'text/plain', ('%+.2f %+.2f' % (vx, wz)).encode())
 
 
 def stop(h, q):
-    # curl 自测用（前端走 /cmd 零速与看门狗；安全动作不设防）
-    h.node.set_cmd(0.0, 0.0)
+    # 显式停止锁存；下一条新导航任务或人工指令才会重新获得控制权。
+    h.node.patrol.cancel()
+    h.node.wp_clear()
+    h.node.clear_goal()
     h._send(200, 'text/plain', b'stopped')
 
 

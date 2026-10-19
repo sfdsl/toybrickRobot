@@ -27,6 +27,8 @@ from save_map import DEFAULT_SAVE_DIR
 import robot_ui.routes_teleop as routes_teleop
 import robot_ui.routes_nav as routes_nav
 import robot_ui.routes_patrol as routes_patrol
+import robot_ui.routes_places as routes_places
+import robot_ui.routes_task as routes_task
 from robot_ui import state_store
 
 # 静态文件目录（/ 与真实文件由 serve_static 提供）
@@ -59,6 +61,11 @@ ROUTES = {
     ('GET', '/patrol/resume'):  routes_patrol.resume,
     ('GET', '/patrol/skip'):    routes_patrol.skip,
     ('GET', '/patrol/cancel'):  routes_patrol.cancel,
+    ('GET', '/places/list'):   routes_places.listing,
+    ('GET', '/places/add'):    routes_places.add,
+    ('GET', '/places/delete'): routes_places.delete,
+    ('GET', '/places/go'):     routes_places.go,
+    ('GET', '/task/request'):  routes_task.request,
 }
 
 
@@ -172,7 +179,7 @@ class Handler(BaseHTTPRequestHandler):
             # 鉴权：token 开启时，敏感路由必须带 k=<token>。
             # 白名单（只读或本就免敏）：/state /patrol/points /features；
             # /stream.mjpg、/events、静态文件在上面分支已放行，不经过这里。
-            PUBLIC = ('/state', '/patrol/points', '/features')
+            PUBLIC = ('/state', '/patrol/points', '/features', '/places/list')
             if Handler.token and u.path not in PUBLIC and q.get('k', [''])[0] != Handler.token:
                 return self._send(403, 'application/json; charset=utf-8',
                                   json.dumps({'ok': False, 'msg': '✗ 鉴权失败：地址缺 k= 参数（用启动时打印的完整地址）'},
@@ -287,13 +294,13 @@ def main():
     # 功能注册表预置（hub 屏4 动态渲染用，须在 rclpy.init() 之前；顺序 A1→B6 与 hub 页一致）
     state_store.register_feature('手机点图导航', '已具备', href='/')
     state_store.register_feature('多点巡逻', '已具备', href='/nav.html')
-    state_store.register_feature('语义标注地图', '待做')
+    state_store.register_feature('语义标注地图', '已具备', detail='地点名称与地图版本绑定')
     state_store.register_feature('地图编辑器', '待做')
     state_store.register_feature('RKNN视觉', '进行中')
     state_store.register_feature('语音指令', '待做')
     state_store.register_feature('rosbag', '已具备')
     state_store.register_feature('状态灯屏按键', '进行中')
-    state_store.register_feature('电量温度监控', '已具备')
+    state_store.register_feature('电量温度监控', '进行中', detail='电量已接入；温度待标定')
     state_store.register_feature('自主探索建图', '进行中')
     state_store.register_feature('动态避障', '待做')
     state_store.register_feature('目标跟随', '待做')

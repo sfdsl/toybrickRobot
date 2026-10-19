@@ -195,8 +195,8 @@ class PatrolRunner:
 
     def cancel(self):
         """取消整趟巡逻；实际收尾（停车+release+running=False）统一在 _run 里做"""
-        self.cancel_evt.set()
         with self.lock:
+            self.cancel_evt.set()
             gh = self.gh
         if gh is not None:
             try:
@@ -295,6 +295,10 @@ class PatrolRunner:
         try:
             node.set_cmd(0.0, 0.0)
             with self.lock:
+                if self.cancel_evt.is_set():
+                    end_kind = 'canceled'
+                    return
+                node.publish_control('nav')
                 n = len(self.pts)
                 self.st.update({'cur': 0, 'total': n, 'elapsed': 0.0,
                                 'eta': self._eta_estimate(0), 'msg': '巡逻中'})
@@ -407,6 +411,8 @@ class PatrolRunner:
         finally:
             # 收尾（finally 语义）：停车 + 释放 PATROL + 结束态
             node.set_cmd(0.0, 0.0)
+            if self.cancel_evt.is_set():
+                node.publish_control('stop')
             node.modes.release('patrol')
             with self.lock:
                 self.running = False

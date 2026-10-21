@@ -17,7 +17,10 @@ class ModeMgr:
 
     # NAV 300s 兜底过期：点选导航完成/放弃后忘记「清空」时自动释放，
     # 防止 PATROL/其它来源被永久拒绝（正常路径仍由 goal_clear/wp_clear/_wp_watch 显式释放）
-    TIMEOUT = {'TELEOP': 3.0, 'NAV': 300.0, 'PATROL': None}
+    TIMEOUT = {'TELEOP': 3.0, 'NAV': 300.0, 'PATROL': None,
+               # P2-B1 探索：一次跑几分钟到一小时，长期占控不自动过期（同 PATROL）；
+               # 收尾由 ExploreRunner._run 的 finally 显式 release。
+               'EXPLORE': None}
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -31,9 +34,13 @@ class ModeMgr:
         """
         with self.lock:
             self._expire()
+            if self.mode == 'EXPLORE' and who != 'explore':
+                return False, '探索正在执行，请先停止探索再切换控制'
             if force_unless is not None and self.mode == force_unless:
                 return False, '%s 被 %s 占用（%s）' % (mode, self.mode, self.holder)
-            if self.mode not in ('IDLE', mode) and not force:
+            # 同一持有者换动作类型（如 mqtt 的 manual→goal）不算抢占，直接放行——
+            # 否则 TELEOP 3s 窗口内同源自锁（E2E 实测：NAV 被 TELEOP 占用（mqtt））
+            if self.mode not in ('IDLE', mode) and not force and self.holder != who:
                 return False, '%s 被 %s 占用（%s）' % (mode, self.mode, self.holder)
             self.mode, self.holder, self.t0 = mode, who, time.time()
             return True, 'ok'

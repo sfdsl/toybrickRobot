@@ -24,9 +24,11 @@ import argparse
 import math
 import os
 import sys
+import time
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, Twist
+from nav2_msgs.action import NavigateToPose
 from std_msgs.msg import Bool, String
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from rclpy.time import Time
@@ -78,6 +80,43 @@ class GoalBridge(BasicNavigator):
     def _on_estop(self, msg):
         if msg.data:
             self.estop = True
+
+    def goToPose(self, pose, behavior_tree=''):
+        """BasicNavigator 的缺省实现会无限等待；网页请求必须有超时。"""
+        if not self.nav_to_pose_client.wait_for_server(timeout_sec=2.0):
+            self.reject_goal('Nav2 navigate_to_pose 动作服务未就绪：请检查 controller_server 和生命周期启动日志')
+            return False
+        goal = NavigateToPose.Goal()
+        goal.pose = pose
+        goal.behavior_tree = behavior_tree
+        future = self.nav_to_pose_client.send_goal_async(goal, feedback_callback=self._feedbackCallback)
+        deadline = time.monotonic() + 5.0
+        while rclpy.ok() and not future.done() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self.estop:
+                break
+        if not future.done():
+            def cancel_late(done):
+                try:
+                    handle = done.result()
+                    if handle is not None and handle.accepted:
+                        handle.cancel_goal_async()
+                except Exception:
+                    pass
+            future.add_done_callback(cancel_late)
+            self.reject_goal('Nav2 目标响应超时或收到急停：本次目标已取消')
+            return False
+        if future.exception() is not None:
+            self.reject_goal('Nav2 目标发送失败：%s' % future.exception())
+            return False
+        self.goal_handle = future.result()
+        if self.goal_handle is None or not self.goal_handle.accepted:
+            self.reject_goal('Nav2 拒绝目标')
+            return False
+        self.result_future = self.goal_handle.get_result_async()
+        self.get_logger().info('导航目标已接受：%.2f, %.2f' %
+                               (pose.pose.position.x, pose.pose.position.y))
+        return True
 
     def purify(self, goal):
         """目标点净化：贴障碍的目标先吸附到膨胀外的可通行点（与自研 goal_nav.plan 同口径）
@@ -141,10 +180,15 @@ class GoalBridge(BasicNavigator):
 
     def cancel(self):
         try:
-            self.cancelTask()
+            if self.goal_handle is not None and self.active:
+                future = self.goal_handle.cancel_goal_async()
+                if rclpy.ok():
+                    rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)
         except Exception as e:          # 没有正在跑的任务时会抛
             self.get_logger().debug('取消任务：%s' % e)
         self.active = False
+        self.goal_handle = None
+        self.result_future = None
 
 
 def main():

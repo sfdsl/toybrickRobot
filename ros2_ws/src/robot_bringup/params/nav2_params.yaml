@@ -472,7 +472,14 @@ global_costmap:
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
-        map_subscribe_transient_local: True   # slam_toolbox 1Hz 重发 /map，只接一次
+        # ⚠ P2-A4（2026-10-20）：从 /map 换到 /map_edited —— 由 03_SLAM/map_overlay.py 提供：
+        #   实时透传 /map + 叠加已保存的编辑层（robot_map_clean.pgm，若有）。
+        #   为什么不用 nav2_map_server：它是**静态快照**，探索模式下 /map 持续增长，
+        #   快照会让规划器看不到新探索区，而 SmacPlanner2D 配的是 allow_unknown: false
+        #   → 探索会直接卡死（见 17 号文档 P2）。
+        #   一键回退：把下面这行改回 /map 即恢复原行为。
+        map_topic: /map_edited
+        map_subscribe_transient_local: True   # map_overlay 1Hz 重发 /map_edited，只接一次
         # ⚠ P1 实测：这个参数必须写在**插件块里**（写在 global_costmap 顶层不生效）。
         #   默认（不写）时墙会被写成 cost=100（occupancy 原值），而 InflationLayer 只把
         #   254 当膨胀源 → **膨胀完全不生效** → 规划器贴墙走（实测离真实障碍仅 0.110 m）。

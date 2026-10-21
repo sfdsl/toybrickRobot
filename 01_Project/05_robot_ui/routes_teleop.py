@@ -31,6 +31,7 @@ def cmd(h, q):
 
 def stop(h, q):
     # 显式停止锁存；下一条新导航任务或人工指令才会重新获得控制权。
+    h.node.explore.cancel()
     h.node.patrol.cancel()
     h.node.wp_clear()
     h.node.clear_goal()

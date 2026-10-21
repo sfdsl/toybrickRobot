@@ -29,6 +29,9 @@ import robot_ui.routes_nav as routes_nav
 import robot_ui.routes_patrol as routes_patrol
 import robot_ui.routes_places as routes_places
 import robot_ui.routes_task as routes_task
+import robot_ui.routes_edit as routes_edit     # P2-A4 地图编辑（擦除/画墙/另存）
+import robot_ui.routes_explore as routes_explore  # P2-B1 前沿探索建图（续建 + 存档不切）
+import robot_ui.routes_voice as routes_voice  # P3 语音/意图（三源一口：语音/MQTT/串口）
 from robot_ui import state_store
 
 # 静态文件目录（/ 与真实文件由 serve_static 提供）
@@ -66,6 +69,27 @@ ROUTES = {
     ('GET', '/places/delete'): routes_places.delete,
     ('GET', '/places/go'):     routes_places.go,
     ('GET', '/task/request'):  routes_task.request,
+    # 地图编辑（P2-A4）：擦除假障碍 / 画虚拟墙 / 另存新版本（永不覆盖 robot_map.*）
+    ('GET', '/edit/status'):   routes_edit.status,
+    ('GET', '/edit/active'):   routes_edit.active,
+    ('GET', '/edit/load'):     routes_edit.load,
+    ('GET', '/edit/info'):     routes_edit.info,
+    ('GET', '/edit/image.png'): routes_edit.image,
+    ('GET', '/edit/stroke'):   routes_edit.stroke,
+    ('GET', '/edit/undo'):     routes_edit.undo,
+    ('GET', '/edit/reset'):    routes_edit.reset,
+    ('GET', '/edit/save'):     routes_edit.save,
+    # 前沿探索（P2-B1）：续建已有图扩图 / 存档不切 / 显式启用
+    ('GET', '/explore/status'):  routes_explore.status,
+    ('GET', '/explore/info'):    routes_explore.info,
+    ('GET', '/explore/image.png'): routes_explore.image,
+    ('GET', '/explore/go'):      routes_explore.go,
+    ('GET', '/explore/cancel'):  routes_explore.cancel,
+    ('GET', '/explore/save'):    routes_explore.save,
+    ('GET', '/explore/activate'): routes_explore.activate,
+    # 语音/意图（P3）：三源一口（浏览器语音 / MQTT 回环 / 串口）走同一意图执行器
+    ('GET', '/voice/intent'):  routes_voice.intent,
+    ('GET', '/voice/status'):  routes_voice.status,
 }
 
 
@@ -179,7 +203,10 @@ class Handler(BaseHTTPRequestHandler):
             # 鉴权：token 开启时，敏感路由必须带 k=<token>。
             # 白名单（只读或本就免敏）：/state /patrol/points /features；
             # /stream.mjpg、/events、静态文件在上面分支已放行，不经过这里。
-            PUBLIC = ('/state', '/patrol/points', '/features', '/places/list')
+            PUBLIC = ('/state', '/patrol/points', '/features', '/places/list',
+                  # 编辑屏只读端点：底图 PNG 由 <canvas> 直接加载（无 k= 参数）
+                  '/edit/status', '/edit/info', '/edit/image.png', '/edit/active',
+                  '/explore/status', '/explore/info', '/explore/image.png')
             if Handler.token and u.path not in PUBLIC and q.get('k', [''])[0] != Handler.token:
                 return self._send(403, 'application/json; charset=utf-8',
                                   json.dumps({'ok': False, 'msg': '✗ 鉴权失败：地址缺 k= 参数（用启动时打印的完整地址）'},
@@ -285,23 +312,41 @@ def main():
                     help='保存地图的目录（默认 ~/RobotCode/04_map）')
     ap.add_argument('--no-auth', action='store_true',
                     help='关闭 token 鉴权（默认开启：/cmd /goal 等敏感接口需要 k=<token> 参数）')
+    ap.add_argument('--token-file', default='~/.robot_ui_token',
+                    help='把启动 token 落盘到该文件（0600），供 mqtt_bridge 等本机进程复用'
+                         '（默认 ~/.robot_ui_token；--no-auth 时写空文件）')
+    ap.add_argument('--serial', default='',
+                    help='ESP32 串口设备（如 /dev/ttyUSB0，115200 8N1；进程内监听意图 JSON 行，'
+                         '协议见 robot_ui/serial_cmd.py 文件头；禁用 /dev/ttyACM0）')
     args = ap.parse_args()
 
     # 鉴权 token：16 位 hex（8 字节），启动时生成；--no-auth 关闭（置空 = 全放行）
     TOKEN = '' if args.no_auth else secrets.token_hex(8)
     Handler.token = TOKEN
+    # P3：token 落盘（0600）供 mqtt_bridge 经 localhost 复用统一任务入口；
+    #     卡-04 口径「账号密码/证书走环境变量或密钥文件」，不进 git、不进日志。
+    try:
+        tf = os.path.expanduser(args.token_file)
+        fd = os.open(tf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write(TOKEN)
+    except OSError as e:
+        print('⚠ token 文件写入失败（mqtt_bridge 将无法自动取 token）：%s' % e)
 
     # 功能注册表预置（hub 屏4 动态渲染用，须在 rclpy.init() 之前；顺序 A1→B6 与 hub 页一致）
     state_store.register_feature('手机点图导航', '已具备', href='/')
     state_store.register_feature('多点巡逻', '已具备', href='/nav.html')
     state_store.register_feature('语义标注地图', '已具备', detail='地点名称与地图版本绑定')
-    state_store.register_feature('地图编辑器', '待做')
+    state_store.register_feature('地图编辑器', '已具备', href='/edit.html',
+                                detail='擦除假障碍 / 画虚拟墙 / 另存不覆盖原图')
     state_store.register_feature('RKNN视觉', '进行中')
-    state_store.register_feature('语音指令', '待做')
+    state_store.register_feature('语音指令', '进行中', href='/voice.html',
+                                detail='浏览器语音 + 意图词表；MQTT/串口接入同入口')
     state_store.register_feature('rosbag', '已具备')
     state_store.register_feature('状态灯屏按键', '进行中')
     state_store.register_feature('电量温度监控', '进行中', detail='电量已接入；温度待标定')
-    state_store.register_feature('自主探索建图', '进行中')
+    state_store.register_feature('自主探索建图', '已具备', href='/explore.html',
+                                detail='前沿探索 + 续建已有图 + 存档不切')
     state_store.register_feature('动态避障', '待做')
     state_store.register_feature('目标跟随', '待做')
     state_store.register_feature('ArUco停靠', '待做')
@@ -317,6 +362,16 @@ def main():
     threading.Thread(target=spin_forever, args=(node,), daemon=True).start()
     threading.Thread(target=node.watchdog, daemon=True).start()
     threading.Thread(target=render_loop, args=(node, args.size), daemon=True).start()
+
+    # P3：ESP32 串口意图监听（进程内，直接走 node.voice 意图执行器；协议见 serial_cmd.py）
+    if args.serial:
+        if '/dev/ttyACM0' in args.serial:
+            print('⚠ 拒绝 %s：该口被底盘占用，串口语音请换 /dev/ttyUSB0 或 SoC UART' % args.serial)
+        else:
+            import robot_ui.serial_cmd as serial_cmd
+            br = serial_cmd.SerialBridge(node.voice, args.serial)
+            br.start()
+            print('ESP32 串口意图监听已启动：%s（115200 8N1）' % args.serial)
 
     srv = ThreadingHTTPServer(('0.0.0.0', args.port), Handler)
     srv.daemon_threads = True

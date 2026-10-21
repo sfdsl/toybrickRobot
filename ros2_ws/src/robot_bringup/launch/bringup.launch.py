@@ -6,7 +6,9 @@
     1) 底盘   base_driver/chassis_node          → /cmd_vel ⇄ /odom + TF
     2) 雷达   ldlidar/ld14p.launch.py           → /scan + base_link→base_laser
     3) SLAM   slam_toolbox（建图 / 定位二选一）   → /map + map→odom
-    4) 手机   01_Project/03_SLAM/phone_teleop.py → 网页遥控 + 实时地图 + 保存地图 + 点选目标
+    4) 网页   robot_ui.app（05_robot_ui，六屏）  → 遥控/航点/巡逻/探索/编辑/功能
+              ⚠ 由 start_robot.sh 在 launch 外拉起；本 launch 只在 phone:=true 时打一行
+              提示（旧 phone_teleop.py 已归档到 01_Project/bak_phone_teleop_20261020/）
     5) 可选   goal_nav.py --listen              → 连续导航：手机点一个点就去一个点（nav:=true）
     6) 可选   录 rosbag（/scan /odom /tf /cmd_vel /map）
 
@@ -35,7 +37,7 @@ from datetime import datetime
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
-                            IncludeLaunchDescription, LogInfo)
+                            GroupAction, IncludeLaunchDescription, LogInfo)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -56,6 +58,7 @@ def generate_launch_description():
     ekf = LaunchConfiguration('ekf')
     bag = LaunchConfiguration('bag')
     bag_dir = LaunchConfiguration('bag_dir')
+    nav2_params_file = LaunchConfiguration('nav2_params_file')
 
     slam_share = get_package_share_directory('slam_toolbox')
     lidar_share = get_package_share_directory('ldlidar')
@@ -74,6 +77,9 @@ def generate_launch_description():
         #   手机网页点目标 → /goal_pose → nav2_goal_bridge（净化）→ navigate_to_pose。
         DeclareLaunchArgument('nav2', default_value='false',
                               description='启动 nav2 全栈（默认 false；开启时自动忽略 nav）'),
+        DeclareLaunchArgument('nav2_params_file', default_value=os.path.join(
+            get_package_share_directory('robot_bringup'), 'params', 'nav2_params.yaml'),
+            description='Nav2 参数文件；与 slam_toolbox 的 params_file 分开'),
         DeclareLaunchArgument('ekf', default_value='false',
                               description='启动 robot_localization EKF（卡-02：轮速+IMU 融合）'
                                           '；开启后 odom→base_link 改由 EKF 发布'),
@@ -112,13 +118,14 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression(["'", mode, "' == 'localization'"])),
     )
 
-    # 4) 手机遥控网页（含「保存地图」按钮与地图点选目标）
-    phone_proc = ExecuteProcess(
-        cmd=['python3', os.path.join(SLAM_TOOLS, 'phone_teleop.py'),
-             '-p', port, '-r', view, '-t',
-             PythonExpression(["'cmd_vel_manual' if '", nav2,
-                               "' == 'true' else 'cmd_vel'"])],
-        output='screen',
+    # 4) 手机网页 —— 已改为 robot_ui.app（六屏：遥控/航点/巡逻/探索/编辑/功能），
+    #    由 start_robot.sh 在外部拉起（`python3 -m robot_ui.app`，cwd=03_SLAM）。
+    #    旧 phone_teleop.py（单屏、无探索/编辑）已于 2026-10-20 归档到
+    #    01_Project/bak_phone_teleop_20261020/；本 launch 不再拉起它，
+    #    phone:=true 只会提示一句，不会报"文件不存在"。
+    phone_proc = LogInfo(
+        msg=['⚠ phone:=true 已废弃：网页服务现在总是 robot_ui.app，'
+             '由 start_robot.sh 启动（若没看到网页，检查 /tmp/robot_ui.log）'],
         condition=IfCondition(phone),
     )
 
@@ -136,7 +143,9 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nav2.launch.py')),
         launch_arguments={'goal_topic': '/goal_pose',
+                          'params_file': nav2_params_file,
                           'cmd_vel_out': '/cmd_vel',
+                          'map_mode': mode,
                           'watchdog': 'true'}.items(),   # P23：恢复启用（§9.3 欠账）。9/23 雷达
                           # USB 抖动事故证明需要它兜底：/odom 断流 1.5s → 零速 + estop 取消导航
         condition=IfCondition(nav2),
@@ -168,7 +177,12 @@ def generate_launch_description():
                           ' ｜ 手机网页端口 ', port,
                           ' ｜ Ctrl-C 停止全部'])
 
-    return LaunchDescription(declared + [banner, chassis, chassis_no_tf, lidar,
-                                         slam_mapping, slam_localization,
-                                         phone_proc, nav_proc, nav2_stack, ekf_stack,
+    # IncludeLaunchDescription 的参数会写入当前上下文；SLAM 与 Nav2 都声明
+    # params_file，必须隔离作用域，避免 Nav2 继承建图 YAML 后按缺省 DWB 启动失败。
+    def scoped(action):
+        return GroupAction(actions=[action], scoped=True)
+
+    return LaunchDescription(declared + [banner, chassis, chassis_no_tf, scoped(lidar),
+                                         scoped(slam_mapping), scoped(slam_localization),
+                                         phone_proc, nav_proc, scoped(nav2_stack), scoped(ekf_stack),
                                          bag_proc])

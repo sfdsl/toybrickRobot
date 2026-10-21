@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>自主探索</title>
+<link rel="stylesheet" href="/common.css">
+<link rel="stylesheet" href="/sub.css">
+<link rel="stylesheet" href="/edit.css">
+<link rel="stylesheet" href="/explore.css">
+</head>
+<body class="has-subnav"><div id="wrap">
+  <header class="e-head">
+    <div>
+      <h1 class="e-h1">自主探索建图</h1>
+      <div class="e-sub">寻找可达未知区域 · <b>需建图模式</b> · <b>存档不切</b></div>
+    </div>
+    <div class="e-conn" id="conn"><i class="e-dot"></i><span id="connTxt">连接中…</span></div>
+  </header>
+
+  <!-- 地图主视觉 -->
+  <section class="e-stage">
+    <canvas id="cv"></canvas>
+
+    <!-- 浮层：探索进度 -->
+    <aside class="e-float">
+      <div class="e-mode" id="modeBadge">续建已有图</div>
+      <div class="e-kv"><span>可达观察点</span><b id="frontiers">0</b></div>
+      <div class="e-kv"><span>已访问</span><b id="visited">0</b></div>
+      <div class="e-kv"><span>失败</span><b id="failed">0</b></div>
+      <div class="e-kv"><span>当前目标</span><b id="goal">-</b></div>
+      <div class="e-kv"><span>存档</span><b id="saved">-</b></div>
+      <div class="e-hint" id="msg">未开始</div>
+    </aside>
+
+    <!-- 图例 -->
+    <div class="e-legend">
+      <span><i class="lg lg-f"></i>前沿</span>
+      <span><i class="lg lg-g"></i>当前目标</span>
+      <span><i class="lg lg-r"></i>车</span>
+    </div>
+
+    <div class="e-toast" id="toast"></div>
+  </section>
+
+  <!-- 模式 + 控制 -->
+  <div class="e-bar">
+    <div class="e-group">
+      <span class="e-label">模式</span>
+      <button class="e-chip on" data-mode="continue">续建已有图</button>
+      <button class="e-chip" data-mode="fresh">探索当前图</button>
+    </div>
+    <div class="e-group">
+      <span class="e-label">状态</span>
+      <span class="e-run" id="runBadge">空闲</span>
+    </div>
+  </div>
+
+  <p style="margin:4px 16px;color:var(--e-text2);font-size:12px;line-height:1.5">
+    探索用于扩展未知区域，不是重复巡逻。图已完整时会结束；没有可达入口时也不会继续。
+    请先用 robot --nav2 --ekf 启动建图模式；从零建图需新启动本轮建图，续建需确认车在原图中的起始位姿。
+  </p>
+
+  <div class="e-actions">
+    <button class="e-btn primary" id="btnGo">开始探索</button>
+    <button class="e-btn ghost" id="btnStop">停止</button>
+    <button class="e-btn ghost" id="btnSave">存档</button>
+    <button class="e-btn ghost warn" id="btnActivate">启用为当前地图</button>
+  </div>
+
+  <nav class="s-nav">
+    <a href="/">遥控</a>
+    <a href="/nav.html">航点</a>
+    <a href="/patrol.html">巡逻</a>
+    <a href="/explore.html" class="on">探索</a>
+    <a href="/edit.html">编辑</a>
+    <a href="/voice.html">语音</a>
+    <a href="/hub.html">功能</a>
+  </nav>
+</div>
+<script src="/api.js"></script>
+<script src="/explore.js?v=20261020-p2fix"></script></body></html>

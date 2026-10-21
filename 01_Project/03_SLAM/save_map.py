@@ -100,6 +100,55 @@ def serialize_posegraph(node, prefix, timeout=30.0, spin=False):
     return False, '服务未在 %.0fs 内写出文件（超时或失败）' % timeout
 
 
+def deserialize_posegraph(node, prefix, timeout=30.0, spin=False):
+    """调用 slam_toolbox 的 deserialize_map 载入已有 posegraph → **续建扩图**
+
+    spin=True ：本线程 spin（命令行场景）
+    spin=False：由外部 executor 处理（网页服务场景，rclpy 已在后台线程 spin）
+
+    ⚠️ 只能在 **mapping 模式**调用：localization 模式已加载 map，服务不在。
+    ⚠️ 前提：车的起始位姿必须在已有图覆盖范围内，否则 slam_toolbox 匹配失败
+       会生成**连通孤岛**（旧图与新图断开、定位崩溃）。
+    返回 (ok, 说明)。
+    """
+    from slam_toolbox.srv import DeserializePoseGraph
+    prefix = os.path.expanduser(prefix)
+    if not os.path.isfile(prefix + '.posegraph'):
+        return False, '找不到 %s.posegraph' % os.path.basename(prefix)
+    try:
+        cli = node.create_client(DeserializePoseGraph,
+                                 'slam_toolbox/deserialize_map')
+    except Exception as e:                     # 服务类型不可用（slam_toolbox 未构建/未 source）
+        return False, '创建服务客户端失败：%s' % e
+    if not cli.wait_for_service(timeout_sec=5.0):
+        return False, ('服务 slam_toolbox/deserialize_map 不在'
+                       '（SLAM 没在跑 / 不在 mapping 模式？）')
+
+    req = DeserializePoseGraph.Request()
+    req.filename = prefix
+    pose = node.robot_pose(max_age=2.0) if hasattr(node, 'robot_pose') else None
+    if pose is not None:
+        req.match_type = DeserializePoseGraph.Request.START_AT_GIVEN_POSE
+        req.initial_pose.x, req.initial_pose.y, req.initial_pose.theta = map(float, pose)
+    else:
+        req.match_type = DeserializePoseGraph.Request.START_AT_FIRST_NODE
+    fut = cli.call_async(req)
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if spin:
+            rclpy.spin_once(node, timeout_sec=0.1)
+        else:
+            time.sleep(0.1)
+        if fut.done():
+            break
+
+    if not fut.done():
+        return False, '服务未在 %.0fs 内返回（超时或失败）' % timeout
+    if fut.exception() is not None or fut.result() is None:
+        return False, '地图反序列化服务调用失败'
+    return True, '已载入 %s（续建模式）' % os.path.basename(prefix)
+
+
 def wait_map(node, timeout=10.0):
     """等 /map 第一帧（transient_local/latched，SLAM 在跑一般立刻拿到）"""
     holder = {}

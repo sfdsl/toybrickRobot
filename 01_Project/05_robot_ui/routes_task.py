@@ -44,6 +44,7 @@ def _request_inner(h, q):
     node = h.node
     try:
         if action == 'stop':
+            node.explore.cancel()
             node.patrol.cancel()
             node.wp_clear()
             node.clear_goal()

@@ -1,0 +1,41 @@
+/* ============ 探索屏专属（控件样式复用 edit.css） ============ */
+
+/* 模式徽标（浮层顶部） */
+.e-mode { font-size:11px; font-weight:600; letter-spacing:.4px;
+          padding:4px 9px; border-radius:999px; margin-bottom:7px;
+          background:rgba(127,209,255,.16); color:var(--e-accent);
+          border:1px solid rgba(127,209,255,.34); display:inline-block; }
+.e-mode.fresh { background:rgba(255,193,77,.16); color:var(--e-amber);
+                border-color:rgba(255,193,77,.34); }
+
+/* 运行状态灯 */
+.e-run { padding:6px 13px; font-size:12.5px; font-weight:600; border-radius:9px;
+         background:rgba(143,167,188,.12); color:var(--e-text2);
+         border:1px solid var(--e-line); }
+.e-run.on  { background:rgba(91,212,154,.16); color:var(--e-ok);
+             border-color:rgba(91,212,154,.4); animation:e-glow 1.9s infinite; }
+.e-run.bad { background:rgba(255,107,107,.16); color:var(--e-bad);
+             border-color:rgba(255,107,107,.4); }
+@keyframes e-glow {
+  0%,100% { box-shadow:0 0 0 0 rgba(91,212,154,.4); }
+  50%     { box-shadow:0 0 16px 0 rgba(91,212,154,.28); }
+}
+
+/* 地图图例 */
+.e-legend { position:absolute; right:12px; bottom:12px;
+            display:flex; gap:11px; padding:7px 11px; font-size:11px;
+            background:rgba(14,26,43,.72); backdrop-filter:blur(9px);
+            border:1px solid var(--e-line); border-radius:10px; color:var(--e-text2); }
+.e-legend span { display:flex; align-items:center; gap:5px; }
+.lg { width:9px; height:9px; border-radius:50%; display:inline-block; }
+.lg-f { background:#00dcff; box-shadow:0 0 7px rgba(0,220,255,.8); }
+.lg-g { background:#FFC14D; box-shadow:0 0 7px rgba(255,193,77,.8); }
+.lg-r { background:#ff5b5b; box-shadow:0 0 7px rgba(255,91,91,.8); }
+
+/* 「启用为当前地图」是危险操作，用警示色但保持次要 */
+.e-btn.warn { background:rgba(255,193,77,.12); color:var(--e-amber);
+              border-color:rgba(255,193,77,.32); }
+.e-btn.warn:hover { background:rgba(255,193,77,.22); }
+
+/* 存档徽标 */
+.e-saved { color:var(--e-amber) !important; }

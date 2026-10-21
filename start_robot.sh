@@ -6,16 +6,24 @@
 #   ~/RobotCode/start_robot.sh --mode localization 定位模式启动（导航用）
 #   ~/RobotCode/start_robot.sh --nav               同时起导航监听（手机点地图即出发；可连续点）
 #   ~/RobotCode/start_robot.sh --nav2              nav2 全栈（手机点地图 → /goal_pose → nav2）
-#   ~/RobotCode/start_robot.sh --ui               只起四屏 UI（robot_ui）：不开相机、不跑 yolo
-#                                                  ——最省：NPU 空闲、相机不占、CPU 最轻
-#   ~/RobotCode/start_robot.sh --ui --cam         四屏 UI + 相机（cam_pub）：hub 屏看原始画面，
-#                                                  仍不跑 yolo 识别
-#   ~/RobotCode/start_robot.sh --vision            视觉全链路：cam_pub + rknn_infer + 四屏UI
-#                                                  （= --ui --cam + yolo；手机 hub 屏 → /cam.mjpg
+#   ── 网页服务总是启动 robot_ui.app（六屏：遥控/航点/巡逻/探索/编辑/功能），无需参数 ──
+#      旧 phone_teleop.py（单屏，无探索/编辑）已归档到 01_Project/bak_phone_teleop_20261020/
+#   ~/RobotCode/start_robot.sh --cam               + 相机（cam_pub）：hub 屏看原始画面
+#                                                  （仍不跑 yolo 识别）
+#   ~/RobotCode/start_robot.sh --vision            视觉全链路：cam_pub + rknn_infer + 六屏UI
+#                                                  （= --cam + yolo；手机 hub 屏 → /cam.mjpg
 #                                                   实时检测画面，《13》P3）
+#   （--ui 仍可写但已无作用：网页总是启动）
 #   ~/RobotCode/start_robot.sh --ekf               启用 EKF 融合（卡-02：轮速+IMU）
 #                                                  → odom→base_link 改由 EKF 发布，底盘自动停发 TF
-#                                                  （可与 --nav2 组合：robotnav --nav2 --ui --ekf）
+#                                                  （可与 --nav2 组合：robotnav --nav2 --ekf）
+#   ~/RobotCode/start_robot.sh --serial /dev/ttyUSB0
+#                                                  ESP32 串口语音（P3）：进程内监听意图 JSON 行，
+#                                                  协议见 robot_ui/serial_cmd.py（禁用 /dev/ttyACM0）
+#   ~/RobotCode/start_robot.sh --mqtt [--mqtt-host H]
+#                                                  MQTT 遥测/任务桥（P3 卡-04）：云端 Broker，
+#                                                  TLS/账号/证书走环境变量 MQTT_HOST/MQTT_PORT/
+#                                                  MQTT_USER/MQTT_PASS 或 --mqtt-args 透传
 #   ~/RobotCode/start_robot.sh --dry-run           只做预检查，不启动
 #   ~/RobotCode/start_robot.sh --stop              急停（先发零速度，再收掉所有节点）
 #
@@ -59,11 +67,12 @@ stop_all() {
     # 视觉链路（--vision 拉起的三件套 + 可能残留的旧版手机遥控）
     pkill -INT -f 'phone_teleop.py'          2>/dev/null; sleep 0.5
     pkill -INT -f 'robot_ui.app'             2>/dev/null; sleep 0.3
+    pkill -INT -f 'mqtt_bridge.py'           2>/dev/null; sleep 0.2
     pkill -f   'rknn_infer/rknn_infer'       2>/dev/null; sleep 0.3
     pkill -f   'cam_pub/cam_pub'             2>/dev/null; sleep 0.3
     for pat in 'phone_teleop.py' 'slam_toolbox' 'ldlidar' 'chassis_node' 'odom_rec.py' \
                'nav2.launch.py' 'lib/nav2_' 'nav2_goal_bridge' \
-               'robot_ui.app' 'rknn_infer/rknn_infer' 'cam_pub/cam_pub'; do
+               'robot_ui.app' 'mqtt_bridge.py' 'rknn_infer/rknn_infer' 'cam_pub/cam_pub'; do
         if pgrep -f "$pat" >/dev/null; then
             say "强制结束残留：$pat"
             pkill -9 -f "$pat" 2>/dev/null
@@ -92,7 +101,7 @@ precheck() {
     pgrep -f 'chassis_node'     >/dev/null && running="$running 底盘"
     pgrep -f 'ldlidar'          >/dev/null && running="$running 雷达"
     pgrep -f 'slam_toolbox'     >/dev/null && running="$running SLAM"
-    pgrep -f 'phone_teleop.py'  >/dev/null && running="$running 手机遥控"
+    pgrep -f 'robot_ui.app'     >/dev/null && running="$running 网页UI"
     if [ -n "$running" ]; then
         fail "检测到已有实例在运行：$running"
         say  "        先执行： $0 --stop   （或到启动终端按 Ctrl-C）"
@@ -106,11 +115,14 @@ MODE="mapping"
 DRY=0
 NAV=0
 NAV2=0
-UI=0
+UI=1    # 默认就起 robot_ui.app（六屏）；--ui 仍可显式写，行为一致
 CAM=0
 VISION=0
 EKF=0
 BAG=0
+SERIAL=""        # P3：ESP32 串口设备（空=不起）
+MQTT=0           # P3：MQTT 遥测/任务桥
+MQTT_ARGS=""     # 透传给 mqtt_bridge.py 的参数（--host/--port/--tls-ca 等）
 while [ $# -gt 0 ]; do
     case "$1" in
         --stop)     stop_all; exit 0 ;;
@@ -118,19 +130,22 @@ while [ $# -gt 0 ]; do
         --nav)      NAV=1; shift ;;
         --nav2)     NAV2=1; shift ;;
         --ui)       UI=1; shift ;;
-        --cam)      CAM=1; shift ;;            # 只开相机（cam_pub），配合 --ui 用
-        --vision)   UI=1; CAM=1; VISION=1; shift ;;   # = --ui --cam + yolo 检测
+        --cam)      CAM=1; shift ;;            # 只开相机（cam_pub），网页 UI 本来就在跑
+        --vision)   UI=1; CAM=1; VISION=1; shift ;;   # = --cam + yolo 检测
         --ekf)      EKF=1; shift ;;            # 启用 EKF 融合（卡-02）：odom→base_link 改由 EKF 发布
         --bag)      BAG=1; shift ;;            # 录制控制权、速度链路和定位话题
+        --serial)   SERIAL="${2:-}"; shift 2 ;;   # P3：ESP32 串口语音（如 /dev/ttyUSB0）
+        --mqtt)     MQTT=1; shift ;;           # P3：MQTT 遥测/任务桥（卡-04）
+        --mqtt-args) MQTT_ARGS="${2:-}"; shift 2 ;;  # 透传 mqtt_bridge.py 参数（引号包整串）
         --dry-run)  DRY=1; shift ;;
-        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --nav2 / --ui / --cam / --vision / --ekf / --bag / --dry-run / --stop）"; exit 2 ;;
+        *)          fail "未知参数：$1（可用：--mode mapping|localization / --nav / --nav2 / --ui / --cam / --vision / --ekf / --bag / --serial DEV / --mqtt / --dry-run / --stop）"; exit 2 ;;
     esac
 done
 # EKF 开关转成 launch 参数（bringup 里 ekf:=true 会同时让底盘 publish_tf=False，避免双发布）
 EKF_ARG=false
 [ "$EKF" = "1" ] && EKF_ARG=true
 if [ "$CAM" = "1" ] && [ "$UI" = "0" ] && [ "$VISION" = "0" ]; then
-    say "提示：--cam 只开相机（cam_pub），没配 --ui/--vision 时页面看不到画面；继续启动。"
+    say "提示：--cam 只开相机（cam_pub），页面画面要等 cam_pub 起来；继续启动。"
 fi
 case "$MODE" in
     mapping|localization) ;;
@@ -158,10 +173,10 @@ source "$SETUP"
 source "$WS/install/setup.bash"
 set -u
 
-# 旧版手机遥控 phone_teleop.py 由 launch 默认拉起（phone:=true，占 8080）；
-# --ui/--vision 时四屏 UI（robot_ui）已接管 8080，必须关掉 launch 里的旧版，否则端口冲突
-PHONE_ARG="true"
-[ "$UI" = "1" ] && PHONE_ARG="false"
+# 旧版 phone_teleop.py 是**单屏** UI（没有探索/编辑/功能中心），现已停用：
+#   P2 起网页服务一律用 robot_ui.app（05_robot_ui 的六屏），所以 launch 里恒不拉起旧版，
+#   否则 robot --mode mapping --nav2 会退回旧界面，看不到探索/编辑屏。
+PHONE_ARG="false"
 
 if ! ros2 pkg prefix robot_bringup >/dev/null 2>&1; then
     fail "找不到 robot_bringup 包 —— 先构建："
@@ -176,9 +191,9 @@ nohup python3 "$HOME/RobotCode/01_Project/03_SLAM/odom_rec.py" >/dev/null 2>&1 &
 disown 2>/dev/null || true
 say "位姿记录已开：tail -f /tmp/rec_live.log"
 
-# ---------------- 四屏 UI / 相机 / 视觉链路（--ui [--cam] / --vision，独立后台，robotstop 统一收） ----
-# --ui          ：只 robot_ui（四屏页）；不开相机、不跑 yolo —— 最省
-# --ui --cam    ：+ cam_pub → robot_ui（/cam.mjpg 原始相机画面），仍不跑 yolo
+# ---------------- 六屏 UI / 相机 / 视觉链路（独立后台，robotstop 统一收） ----------------
+# （无参数）    ：只 robot_ui（六屏页）；不开相机、不跑 yolo —— 最省
+# --cam         ：+ cam_pub → robot_ui（/cam.mjpg 原始相机画面），仍不跑 yolo
 # --vision      ：+ cam_pub + rknn_infer（/detections + /image_det）→ /cam.mjpg 画框画面
 if [ "$UI" = "1" ] || [ "$CAM" = "1" ]; then
     # 清旧实例（含旧版 phone_teleop——四屏 UI 接管 8080 端口，避免两套 UI 抢）
@@ -195,8 +210,20 @@ if [ "$UI" = "1" ] || [ "$CAM" = "1" ]; then
     if [ "$UI" = "1" ]; then
         UI_TOPIC="/cmd_vel"
         [ "$NAV2" = "1" ] && UI_TOPIC="/cmd_vel_manual"
+        UI_SERIAL=""
+        [ -n "$SERIAL" ] && UI_SERIAL="--serial $SERIAL"
         ( cd "$HOME/RobotCode/01_Project/03_SLAM" && \
-          nohup python3 -m robot_ui.app -t "$UI_TOPIC" > /tmp/robot_ui.log 2>&1 & )
+          nohup python3 -m robot_ui.app -t "$UI_TOPIC" $UI_SERIAL > /tmp/robot_ui.log 2>&1 & )
+    fi
+    # P3：MQTT 遥测/任务桥（卡-04）——凭证走环境变量/密钥文件，参数经 --mqtt-args 透传
+    if [ "$MQTT" = "1" ]; then
+        pkill -INT -f 'mqtt_bridge.py' 2>/dev/null; sleep 0.3
+        ( cd "$HOME/RobotCode/01_Project/03_SLAM" && \
+          nohup python3 mqtt_bridge.py $MQTT_ARGS > /tmp/mqtt_bridge.log 2>&1 & )
+        sleep 1
+        pgrep -f 'mqtt_bridge.py' >/dev/null \
+            && ok "MQTT 桥已启动（日志 /tmp/mqtt_bridge.log；参数：${MQTT_ARGS:-环境变量}）" \
+            || fail "MQTT 桥未启动：看 /tmp/mqtt_bridge.log（--host/MQTT_HOST 必填）"
     fi
     sleep 2
     ok_ui=1

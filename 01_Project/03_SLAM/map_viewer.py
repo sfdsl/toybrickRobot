@@ -26,7 +26,9 @@ GLX（X11），故 rviz2 无法在本机运行；此脚本用 OpenCV 渲染（�
     红 100   致命（车中心根本到不了 —— 红区连成一片就说明这条缝过不去）
 """
 import argparse
+import json
 import math
+import os
 import time
 
 import cv2
@@ -47,12 +49,18 @@ LETHAL = 100
 
 
 class MapViewer(Node):
-    def __init__(self, view_range, show_costmap=False):
+    def __init__(self, view_range, show_costmap=False, full_map=False, costmap_only=False):
         super().__init__("map_viewer")
         self.view_range = view_range
         self.map_msg = None
+        self.raw_map_msg = None  # 探索仅使用原始 SLAM 图，避免编辑层/磁盘兜底混入。
+        self.edited_map_msg = None
+        self.raw_map_received_at = 0.0
         self.costmap_msg = None      # --costmap：/global_costmap/costmap（含膨胀层）
         self.show_costmap = show_costmap
+        self.full_map = full_map
+        self.costmap_only = costmap_only
+        self.costmap_received_at = 0.0
         # 最近一次 render() 的视窗参数 (x0, y1, 像素/米, size)，供"画面像素→世界坐标"反算
         # （手机网页点选目标用；详见 phone_teleop.py 的 /goal 接口）
         self.last_view = None
@@ -64,7 +72,9 @@ class MapViewer(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
         )
         self.create_subscription(OccupancyGrid, "/map", self.on_map, qos)
-        self.get_logger().info("等待 /map ...（确认 slam_toolbox 正在运行）")
+        # /map_edited 含编辑层并周期重发，供导航显示；原始 /map 单独保留供探索。
+        self.create_subscription(OccupancyGrid, "/map_edited", self.on_edited_map, qos)
+        self.get_logger().info("等待 /map 或 /map_edited ...（确认 slam_toolbox 正在运行）")
         if show_costmap:
             # 用 VOLATILE 订阅：nav2 的发布者若为 TRANSIENT_LOCAL 也能兼容；
             # 反过来（本端请求 TRANSIENT_LOCAL、对端是 VOLATILE）会一条都收不到。
@@ -73,14 +83,35 @@ class MapViewer(Node):
                               durability=QoSDurabilityPolicy.VOLATILE)
             self.create_subscription(OccupancyGrid, "/global_costmap/costmap",
                                      self.on_costmap, cqos)
+            # Nav2 提供 transient_local 快照；保留 volatile 订阅兼容其他发布者。
+            self.create_subscription(OccupancyGrid, "/global_costmap/costmap",
+                                     self.on_costmap, qos)
             self.get_logger().info(
                 "膨胀层已开：黄=轻膨胀 橙=重膨胀 红=致命（红区连成片 = 过不去）")
 
     def on_map(self, msg):
+        self.raw_map_msg = msg
+        self.raw_map_received_at = time.monotonic()
+        if self.edited_map_msg is None:
+            self.map_msg = msg
+
+    def on_edited_map(self, msg):
+        self.edited_map_msg = msg
         self.map_msg = msg
 
     def on_costmap(self, msg):
         self.costmap_msg = msg
+        self.costmap_received_at = time.monotonic()
+
+    def display_status(self):
+        age = (time.monotonic() - self.costmap_received_at
+               if self.costmap_received_at else None)
+        msg = self.costmap_msg
+        return dict(source="/global_costmap/costmap", received=msg is not None,
+                    age_seconds=age, fresh=age is not None and age < 5.0,
+                    width=msg.info.width if msg else 0,
+                    height=msg.info.height if msg else 0,
+                    full_map=self.full_map, rendered_at=time.time())
 
     def robot_pose(self, max_age=None):
         """返回 (x, y, yaw)；可选拒绝过期的定位 TF。"""
@@ -163,11 +194,12 @@ class MapViewer(Node):
         offset     : 在基准中心上再叠加 (dx, dy)（手机平移用；车动时视野仍跟着车）
         """
         view_range = self.view_range if view_range is None else float(view_range)
-        msg = self.map_msg
+        msg = self.costmap_msg if self.costmap_only else self.map_msg
         if msg is None:
             self.last_view = None
             img = np.full((size, size, 3), 30, np.uint8)
-            cv2.putText(img, "waiting /map ...", (20, 40),
+            cv2.putText(img, "waiting /global_costmap/costmap ..." if self.costmap_only
+                        else "waiting /map ...", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             return img
 
@@ -178,6 +210,9 @@ class MapViewer(Node):
 
         # 视窗（世界坐标，米）
         pose = self.robot_pose()
+        if self.full_map:
+            view_range = max(w, h) * res * 1.04
+            center = (ox + w * res / 2.0, oy + h * res / 2.0)
         half = view_range / 2.0
         if center is not None:
             cx_w, cy_w = center
@@ -206,6 +241,10 @@ class MapViewer(Node):
             subimg = np.full(sub.shape + (3,), 128, np.uint8)   # 未知 灰
             subimg[sub == 0] = (255, 255, 255)                   # 空闲 白
             subimg[sub >= 65] = (0, 0, 0)                        # 障碍 黑
+            if self.costmap_only:
+                subimg[(sub > 0) & (sub < 50)] = (0, 220, 255)
+                subimg[(sub >= 50) & (sub < 100)] = (0, 140, 255)
+                subimg[sub >= 100] = (0, 0, 255)
             subimg = np.flipud(subimg)                           # 图像行从上方开始
 
             sx0w = ox + gx0 * res            # 子图左上角对应世界坐标
@@ -224,7 +263,7 @@ class MapViewer(Node):
                         patch[dy0 - py0:dy1 - py0, dx0 - px0:dx1 - px0]
 
         # 膨胀层（可选，叠在静态地图之上、车辆之下）
-        if self.show_costmap and self.costmap_msg is not None:
+        if self.show_costmap and not self.costmap_only and self.costmap_msg is not None:
             self._overlay_costmap(canvas, x0, y1, s, size)
 
         # 车辆位置（红色三角）
@@ -248,6 +287,9 @@ class MapViewer(Node):
         if pose is None:
             cv2.putText(canvas, "no TF map->base_link", (10, 48),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 1)
+        if self.costmap_only and not self.display_status()["fresh"]:
+            cv2.putText(canvas, "STALE COSTMAP - check Nav2", (10, 76),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         return canvas
 
 
@@ -257,6 +299,9 @@ def main():
                         help="以车为中心的视野范围（米）")
     parser.add_argument("--costmap", action="store_true",
                         help="叠加 nav2 全局代价地图的膨胀层（黄/橙/红）")
+    parser.add_argument("--costmap-only", action="store_true",
+                        help="只显示 Nav2 全局代价图，缺数据时明确等待，不回退到 SLAM 图")
+    parser.add_argument("--full-map", action="store_true", help="显示整张地图，不跟随车辆裁切")
     parser.add_argument("--save", metavar="PNG",
                         help="不开窗口：等 --wait 秒后渲染一帧写成 PNG 并退出"
                              "（SSH / 无显示环境用）")
@@ -269,7 +314,8 @@ def main():
     args = parser.parse_args()
 
     rclpy.init()
-    node = MapViewer(args.range, args.costmap)
+    node = MapViewer(args.range, args.costmap or args.costmap_only,
+                     full_map=args.full_map, costmap_only=args.costmap_only)
 
     if args.save:
         t0 = time.time()
@@ -294,7 +340,13 @@ def main():
             while rclpy.ok():
                 rclpy.spin_once(node, timeout_sec=0.05)
                 t0 = time.time()
-                cv2.imwrite(args.stream, node.render(size=1024))
+                temporary = args.stream + ".tmp.png"
+                cv2.imwrite(temporary, node.render(size=1024))
+                os.replace(temporary, args.stream)
+                status_path = args.stream + ".json"
+                with open(status_path + ".tmp", "w") as f:
+                    json.dump(node.display_status(), f)
+                os.replace(status_path + ".tmp", status_path)
                 while time.time() - t0 < args.period:      # 周期内继续 spin，数据不积压
                     rclpy.spin_once(node, timeout_sec=0.05)
         except KeyboardInterrupt:

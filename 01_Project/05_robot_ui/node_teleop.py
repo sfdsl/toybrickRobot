@@ -28,8 +28,11 @@ except ImportError as e:
         '  source ~/RobotCode/ros2_ws/install/setup.bash' % e)
 
 from map_viewer import MapViewer      # 复用地图订阅 + 渲染（同目录）
+from map_editor import MapEditor      # P2-A4 地图编辑核心（同目录，cwd=03_SLAM 可导入）
 from save_map import DEFAULT_SAVE_DIR, save_pgm_yaml, serialize_posegraph
 from robot_ui.patrol import PatrolRunner   # 屏3 巡逻后端（方案A：顺序 NavigateToPose）
+from robot_ui.explore import ExploreRunner  # P2-B1 前沿探索建图（续建 + 存档不切）
+from robot_ui.intent import IntentEngine   # P3 意图执行器（语音/MQTT/串口三源一口）
 from robot_ui.places import PlaceStore
 
 CMD_TIMEOUT = 0.6                     # 看门狗：多久没收到指令就发零速度
@@ -106,6 +109,11 @@ class PhoneTeleop(MapViewer):
         self.modes = ModeMgr()        # 控制权互斥（四屏并发用）
         self.patrol = PatrolRunner(self)   # 巡逻分发器（Task 6：/patrol/* 后端）
         self.places = PlaceStore(map_prefix or gn.MAP_DEFAULT)
+        self.map_editor = MapEditor()   # P2-A4 地图编辑（擦除/画墙/另存，纯编辑不发速度）
+        self.explore = ExploreRunner(self)  # P2-B1 前沿探索建图
+        self.voice = IntentEngine(self)     # P3 意图执行器（词表/幂等/去抖/限时手动）
+        self._mqtt = {'connected': False, 'broker': '', 'n_in': 0, 'n_out': 0,
+                      'last_msg': ''}       # P3 MQTT 桥状态（桥经 /mqtt/status 上报）
         self.battery = None
         self.cmd = (0.0, 0.0)         # 最近一次下发的 (vx, wz)
         self.last_cmd_t = 0.0         # 最近一次收到网页指令的时刻
@@ -137,6 +145,8 @@ class PhoneTeleop(MapViewer):
                 self.get_logger().warn('预检不可用（点选将跳过预检）：%s' % e)
         self.create_subscription(Odometry, '/odom', self.on_odom, 10)
         self.create_subscription(BatteryState, '/battery', self.on_battery, 10)
+        # P3：MQTT 桥（独立进程）经 /mqtt/status 上报连接状态（String=JSON）
+        self.create_subscription(String, '/mqtt/status', self.on_mqtt_status, 10)
         # 视觉 HUD（《13》P3）：优先 rknn_infer 的画框 JPEG（/image_det，10fps）；
         # 没跑 yolo（robotnav --nav2 --ui）时自动降级到 /image_raw 原始画面（本地按 CAM_FPS 节流编码）
         self.det_jpeg = b''
@@ -201,6 +211,18 @@ class PhoneTeleop(MapViewer):
                         'percentage': round(msg.percentage * 100, 1)
                         if math.isfinite(msg.percentage) else None,
                         'stamp': time.time()}
+
+    def on_mqtt_status(self, msg):
+        """P3：MQTT 桥心跳状态（String=JSON：connected/broker/n_in/n_out/last_msg）"""
+        try:
+            d = json.loads(msg.data)
+            if isinstance(d, dict):
+                with self.lock:
+                    self._mqtt.update({k: d[k] for k in
+                                       ('connected', 'broker', 'n_in', 'n_out',
+                                        'last_msg') if k in d})
+        except (ValueError, TypeError):
+            pass
 
     def current_map_id(self):
         try:
@@ -616,6 +638,11 @@ class PhoneTeleop(MapViewer):
             'battery': self.battery,
             'map_id': self.current_map_id(),
             'patrol': self.patrol.status(),     # 屏3 数据源：cur/total/per/elapsed/eta/running/paused
+            'edit': self.map_editor.status(),   # P2-A4 编辑屏数据源：尺寸/笔画/已存版本
+            'explore': self.explore.status(),   # P2-B1 探索屏数据源：前沿/进度/存档版本
+            # P3：语音屏数据源（意图层统计）+ MQTT 桥连接状态（/mqtt/status 上报）
+            'voice': self.voice.status(),
+            'mqtt': dict(self._mqtt),
             'view': ('%.1f m%s' % (rng, ('，偏移 %.1f/%.1f' % (ox, oy))
                                    if abs(ox) > 0.05 or abs(oy) > 0.05 else '')),
             'view_range': round(rng, 3),        # 给网页初始化用（数值）

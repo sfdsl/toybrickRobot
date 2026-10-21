@@ -9,7 +9,7 @@ const CARDS=[
   { id:'A3', name:'语义标注地图', state:'todo' },
   { id:'A4', name:'地图编辑器',   state:'todo' },
   { id:'A5', name:'RKNN视觉',     state:'wip' },
-  { id:'A6', name:'语音指令',     state:'todo' },
+  { id:'A6', name:'语音指令',     state:'wip',  href:'/voice.html' },
   { id:'A7', name:'rosbag',       state:'ok' },
   { id:'A8', name:'状态灯屏按键', state:'wip' },
   { id:'A9', name:'电量温度监控', state:'ok' },

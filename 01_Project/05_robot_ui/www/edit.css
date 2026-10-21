@@ -1,0 +1,113 @@
+/* ============ 地图编辑屏（P2-A4）· 深色科技仪表盘 ============
+   色板与四屏统一：底 #0A1420/#12202F · 主 #7FD1FF · 强调 #FFC14D
+   字体 PingFang SC · 标题 18/600 · 副 15/500 · 正文 13/400
+   ⚠️ 不用 Tailwind CDN：本机离线，`@import` 失败会整页无样式。 */
+:root {
+  --e-bg:   #0A1420;
+  --e-bg2:  #12202F;
+  --e-panel:#16283F;
+  --e-line: rgba(127,209,255,.14);
+  --e-accent:#7FD1FF;
+  --e-amber:#FFC14D;
+  --e-text: #E6EEF5;
+  --e-text2:#8FA7BC;
+  --e-ok:   #5BD49A;
+  --e-bad:  #FF6B6B;
+  --e-r:    14px;
+}
+
+/* padding-bottom 给 position:fixed 的 .s-nav 让位（同 sub.css 的 .s-page/#padbox），
+   否则底部按钮会被导航条压住、点不到。box-sizing:border-box 已全局开启，总高仍是 100%。 */
+#wrap { display:flex; flex-direction:column; height:100%; padding-bottom:58px;
+        background:radial-gradient(120% 90% at 20% 0%, var(--e-bg2) 0%, var(--e-bg) 70%); }
+
+/* ---- 顶栏 ---- */
+.e-head { display:flex; align-items:center; justify-content:space-between;
+          padding:12px 16px 8px; }
+.e-h1   { margin:0; font-size:18px; font-weight:600; color:var(--e-text); letter-spacing:.3px; }
+.e-sub  { font-size:13px; color:var(--e-text2); margin-top:2px; }
+.e-sub b{ color:var(--e-amber); font-weight:500; }
+
+.e-conn { display:flex; align-items:center; gap:7px; padding:6px 11px;
+          font-size:12px; color:var(--e-text2);
+          background:rgba(127,209,255,.08); border:1px solid var(--e-line);
+          border-radius:999px; }
+.e-dot  { width:8px; height:8px; border-radius:50%; background:var(--e-text2);
+          box-shadow:0 0 0 0 rgba(91,212,154,.5); }
+.e-conn.on .e-dot { background:var(--e-ok); animation:e-pulse 1.9s infinite; }
+.e-conn.on { color:var(--e-ok); }
+@keyframes e-pulse {
+  0%   { box-shadow:0 0 0 0 rgba(91,212,154,.55); }
+  70%  { box-shadow:0 0 0 8px rgba(91,212,154,0); }
+  100% { box-shadow:0 0 0 0 rgba(91,212,154,0); }
+}
+
+/* ---- 地图主视觉 ---- */
+.e-stage { position:relative; flex:1 1 auto; min-height:300px; margin:0 12px;
+           border:1px solid var(--e-line); border-radius:var(--e-r);
+           overflow:hidden; background:#0d1a27;
+           box-shadow:0 10px 30px -14px rgba(0,0,0,.65), inset 0 0 0 1px rgba(127,209,255,.05); }
+#cv, .e-ghost { position:absolute; inset:0; width:100%; height:100%;
+                touch-action:none; -webkit-user-drag:none; user-select:none; }
+.e-ghost { pointer-events:none; }
+
+/* 浮层状态卡（玻璃感） */
+.e-float { position:absolute; left:12px; top:12px; width:172px;
+           padding:11px 13px; border-radius:12px;
+           background:rgba(14,26,43,.72); backdrop-filter:blur(9px);
+           border:1px solid var(--e-line);
+           box-shadow:0 12px 32px -16px rgba(0,0,0,.8); }
+.e-kv   { display:flex; justify-content:space-between; align-items:baseline;
+          font-size:12px; padding:3px 0; color:var(--e-text2); }
+.e-kv b { font-size:13px; color:var(--e-accent); font-weight:600;
+          font-variant-numeric:tabular-nums; }
+.e-hint { margin-top:7px; padding-top:7px; border-top:1px dashed var(--e-line);
+          font-size:11px; line-height:1.55; color:var(--e-text2); }
+
+/* 吐司 */
+.e-toast { position:absolute; left:50%; bottom:16px; transform:translate(-50%,12px);
+           max-width:82%; padding:9px 15px; border-radius:10px; font-size:12.5px;
+           background:rgba(14,26,43,.92); border:1px solid var(--e-line);
+           color:var(--e-text); opacity:0; pointer-events:none;
+           transition:opacity .22s ease, transform .22s ease; }
+.e-toast.on { opacity:1; transform:translate(-50%,0); }
+.e-toast.bad { border-color:rgba(255,107,107,.5); color:#ffc9c9; }
+.e-toast.ok  { border-color:rgba(91,212,154,.5); color:#bdf0d6; }
+
+/* ---- 工具条 ---- */
+.e-bar  { display:flex; gap:16px; flex-wrap:wrap; padding:11px 16px 4px; }
+.e-group{ display:flex; align-items:center; gap:7px; }
+.e-label{ font-size:11px; letter-spacing:.6px; color:var(--e-text2);
+          text-transform:uppercase; margin-right:1px; }
+.e-chip { padding:7px 12px; font-size:12.5px; color:var(--e-text2);
+          background:rgba(127,209,255,.06); border:1px solid var(--e-line);
+          border-radius:9px; cursor:pointer;
+          transition:background .18s, color .18s, border-color .18s, transform .12s; }
+.e-chip:hover { background:rgba(127,209,255,.14); color:var(--e-text); transform:translateY(-1px); }
+.e-chip:active { transform:translateY(0) scale(.97); }
+.e-chip.on    { background:rgba(127,209,255,.2); color:var(--e-accent);
+                border-color:rgba(127,209,255,.5); box-shadow:0 0 14px -4px rgba(127,209,255,.55); }
+.e-chip.on[data-mode="wall"] { background:rgba(255,107,107,.16); color:var(--e-bad);
+                border-color:rgba(255,107,107,.45); box-shadow:0 0 14px -4px rgba(255,107,107,.5); }
+#panToggle.on { background:rgba(255,193,77,.18); color:var(--e-amber);
+                border-color:rgba(255,193,77,.45); }
+
+/* ---- 动作按钮 ---- */
+.e-actions { display:flex; gap:9px; padding:9px 16px 12px; }
+.e-btn  { flex:1; padding:11px 8px; font-size:13px; font-weight:500;
+          border-radius:11px; cursor:pointer; border:1px solid var(--e-line);
+          transition:transform .12s, box-shadow .18s, background .18s; }
+.e-btn:active { transform:scale(.97); }
+.e-btn.ghost  { background:rgba(127,209,255,.07); color:var(--e-text); }
+.e-btn.ghost:hover { background:rgba(127,209,255,.15); }
+.e-btn.primary{ background:linear-gradient(135deg,#7FD1FF 0%,#4FA9E8 100%);
+                color:#06202f; font-weight:600; border-color:transparent;
+                box-shadow:0 10px 24px -12px rgba(127,209,255,.8); }
+.e-btn.primary:hover { box-shadow:0 14px 30px -12px rgba(127,209,255,.95); }
+.e-btn[disabled] { opacity:.42; cursor:not-allowed; }
+
+@media (max-width:420px){
+  .e-bar { gap:11px; }
+  .e-chip { padding:6px 9px; font-size:12px; }
+  .e-float{ width:150px; }
+}

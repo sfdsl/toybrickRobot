@@ -65,6 +65,7 @@ def generate_launch_description():
     watchdog = LaunchConfiguration('watchdog')
     cmd_vel_out = LaunchConfiguration('cmd_vel_out')
     goal_topic = LaunchConfiguration('goal_topic')
+    map_mode = LaunchConfiguration('map_mode')
 
     # tf 用相对名，便于加命名空间
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
@@ -103,6 +104,8 @@ def generate_launch_description():
                               description='最终速度话题（P2 不动车测试改 /test_cmd_vel）'),
         DeclareLaunchArgument('goal_topic', default_value='/goal_pose',
                               description='桥接订阅的目标话题'),
+        DeclareLaunchArgument('map_mode', default_value='localization',
+                              description='map_overlay 模式：localization 或 mapping'),
     ]
 
     nodes = [
@@ -202,6 +205,15 @@ def generate_launch_description():
         condition=IfCondition(watchdog),
     )
 
+    # 12) P2-A4：/map → /map_edited（实时 + 编辑覆盖层）→ static_layer 消费
+    #     不用 nav2_map_server：它发静态快照，探索模式下 /map 持续增长会被冻结，
+    #     而 SmacPlanner2D 是 allow_unknown: false → 探索会卡死。
+    map_overlay_proc = ExecuteProcess(
+        cmd=['python3', os.path.join(SLAM_TOOLS, 'map_overlay.py'),
+             '--mode', map_mode],
+        output='screen',
+    )
+
     banner = LogInfo(msg=['nav2 启动：参数=', params_file,
                           ' ｜ 硬安全层=', collision,
                           ' ｜ 桥接=', bridge,
@@ -213,7 +225,8 @@ def generate_launch_description():
         # ⚠ 不要用缓冲日志：P2 排查时踩过——RCUTILS_LOGGING_BUFFERED_STREAM=1 会把
         #   子进程的 rcutils 日志攒在缓冲区里，桥接的「收到目标点」等 INFO 迟迟不落地，
         #   看起来就像"目标没送达/回调没触发"，实际是日志没刷出来。真机排查要实时日志。
-        [SetEnvironmentVariable('RCUTILS_LOGGING_BUFFERED_STREAM', '0')]
+        [SetEnvironmentVariable('RCUTILS_LOGGING_BUFFERED_STREAM', '0'),
+         map_overlay_proc]
         + declared
         + [banner]
         + nodes

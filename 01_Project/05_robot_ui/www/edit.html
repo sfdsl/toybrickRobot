@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>地图编辑</title>
+<link rel="stylesheet" href="/common.css">
+<link rel="stylesheet" href="/sub.css">
+<link rel="stylesheet" href="/edit.css">
+</head>
+<body class="has-subnav"><div id="wrap">
+  <header class="e-head">
+    <div>
+      <h1 class="e-h1">地图编辑</h1>
+      <div class="e-sub">擦除假障碍 · 画虚拟墙 · <b>另存不覆盖原图</b></div>
+    </div>
+    <div class="e-conn" id="conn"><i class="e-dot"></i><span id="connTxt">连接中…</span></div>
+  </header>
+
+  <!-- 地图主视觉 -->
+  <section class="e-stage">
+    <canvas id="cv" onerror="this.style.display='none'"></canvas>
+
+    <!-- 浮层状态卡 -->
+    <aside class="e-float">
+      <div class="e-kv"><span>尺寸</span><b id="dim">-</b></div>
+      <div class="e-kv"><span>笔画</span><b id="strokes">0</b></div>
+      <div class="e-kv"><span>未存改动</span><b id="dirty">否</b></div>
+      <div class="e-kv"><span>已存版本</span><b id="ver">-</b></div>
+      <div class="e-hint" id="hint">先点「抓取当前地图」载入底图</div>
+    </aside>
+
+    <!-- 取色预览（跟随手指/鼠标） -->
+    <canvas id="ghost" class="e-ghost"></canvas>
+    <div class="e-toast" id="toast"></div>
+  </section>
+
+  <!-- 画笔工具条 -->
+  <div class="e-bar">
+    <div class="e-group">
+      <span class="e-label">画笔</span>
+      <button class="e-chip on" data-mode="erase">擦除假障碍</button>
+      <button class="e-chip" data-mode="wall">画虚拟墙</button>
+      <button class="e-chip" id="panToggle" title="拖动平移">✋ 平移</button>
+    </div>
+    <div class="e-group">
+      <span class="e-label">笔刷</span>
+      <button class="e-chip" data-r="1">1</button>
+      <button class="e-chip on" data-r="3">3</button>
+      <button class="e-chip" data-r="5">5</button>
+    </div>
+    <div class="e-group">
+      <span class="e-label">缩放</span>
+      <button class="e-chip" id="zIn">＋</button>
+      <button class="e-chip" id="zOut">－</button>
+      <button class="e-chip" id="zFit">⟲ 复位</button>
+    </div>
+  </div>
+
+  <!-- 动作 -->
+  <div class="e-actions">
+    <button class="e-btn ghost" id="btnLoad">抓取当前地图</button>
+    <button class="e-btn ghost" id="btnUndo">撤销</button>
+    <button class="e-btn ghost" id="btnReset" title="清除所有笔画，恢复抓取时的底图">清空编辑</button>
+    <button class="e-btn primary" id="btnSave">另存新版本</button>
+  </div>
+
+  <nav class="s-nav">
+    <a href="/">遥控</a>
+    <a href="/nav.html">航点</a>
+    <a href="/patrol.html">巡逻</a>
+    <a href="/explore.html">探索</a>
+    <a href="/edit.html" class="on">编辑</a>
+    <a href="/voice.html">语音</a>
+    <a href="/hub.html">功能</a>
+  </nav>
+</div>
+<script src="/api.js"></script>
+<script src="/edit.js?v=20261020-p2fix"></script></body></html>

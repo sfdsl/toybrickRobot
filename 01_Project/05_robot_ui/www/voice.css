@@ -1,0 +1,107 @@
+/* ============ 语音屏（P3）· 深色科技仪表盘 ============
+   复用 edit.css 的 e-* 变量体系（离线无 CDN，禁 @import 外链）。
+   本文件只加语音特有件：波形、麦克风、链路灯、停止兜底。 */
+
+/* ---- 三路链路灯 ---- */
+.v-lights { padding-top:4px; }
+.v-light { display:inline-flex; align-items:center; gap:6px; padding:6px 11px;
+           font-size:12px; color:var(--e-text2); border:1px solid var(--e-line);
+           border-radius:999px; background:rgba(127,209,255,.05);
+           transition:color .25s, border-color .25s; }
+.v-light i { width:8px; height:8px; border-radius:50%; background:#3a4d61;
+             transition:background .25s, box-shadow .25s; }
+.v-light.on { color:var(--e-ok); border-color:rgba(91,212,154,.4); }
+.v-light.on i { background:var(--e-ok); box-shadow:0 0 10px rgba(91,212,154,.6);
+                animation:e-pulse 1.9s infinite; }
+.v-light.off { color:var(--e-bad); border-color:rgba(255,107,107,.35); }
+.v-light.off i { background:var(--e-bad); }
+
+/* ---- 麦克风主控区（约 50% 屏高） ---- */
+.v-miczone { position:relative; flex:1 1 48%; min-height:230px;
+             margin:10px 12px 0; display:flex; flex-direction:column;
+             align-items:center; justify-content:center; gap:14px;
+             border:1px solid var(--e-line); border-radius:var(--e-r);
+             background:radial-gradient(80% 70% at 50% 32%,
+                         rgba(127,209,255,.10) 0%, rgba(13,26,39,0) 72%), #0d1a27;
+             overflow:hidden;
+             box-shadow:0 10px 30px -14px rgba(0,0,0,.65),
+                        inset 0 0 0 1px rgba(127,209,255,.05); }
+#wave { position:absolute; inset:0; width:100%; height:100%; opacity:.75;
+        pointer-events:none; }
+
+/* 麦克风圆钮：默认青色渐变，识别中呼吸光 + 外环 */
+.v-mic { position:relative; width:112px; height:112px; border-radius:50%;
+         border:1px solid rgba(127,209,255,.45); cursor:pointer;
+         color:var(--e-accent);
+         background:radial-gradient(circle at 32% 28%, #1d3a55 0%, #12263a 70%);
+         box-shadow:0 14px 36px -14px rgba(127,209,255,.55),
+                    inset 0 1px 0 rgba(255,255,255,.09);
+         display:flex; align-items:center; justify-content:center;
+         transition:transform .14s, box-shadow .22s, color .22s, border-color .22s;
+         -webkit-tap-highlight-color:transparent; }
+.v-mic:active { transform:scale(.95); }
+.v-mic.rec { color:#06202f;
+             background:radial-gradient(circle at 32% 28%, #9fe2ff 0%, #57b6ee 72%);
+             border-color:rgba(127,209,255,.9);
+             box-shadow:0 0 0 8px rgba(127,209,255,.12),
+                        0 0 42px 4px rgba(127,209,255,.5);
+             animation:v-breathe 1.5s ease-in-out infinite; }
+.v-mic.busy { animation:v-breathe 1s ease-in-out infinite; }
+@keyframes v-breathe {
+  0%,100% { box-shadow:0 0 0 6px rgba(127,209,255,.10),
+                       0 0 30px 2px rgba(127,209,255,.35); }
+  50%     { box-shadow:0 0 0 13px rgba(127,209,255,.16),
+                       0 0 48px 8px rgba(127,209,255,.55); }
+}
+
+.v-miclabel { font-size:15px; font-weight:500; color:var(--e-text); z-index:1; }
+.v-degrade { max-width:82%; padding:9px 13px; border-radius:10px; z-index:1;
+             font-size:12px; line-height:1.6; color:var(--e-amber);
+             background:rgba(255,193,77,.10); border:1px solid rgba(255,193,77,.35); }
+
+/* ---- 转写与意图反馈 ---- */
+.v-feedback { margin:10px 12px 0; padding:11px 13px;
+              border:1px solid var(--e-line); border-radius:12px;
+              background:rgba(22,40,63,.55); }
+.v-line { display:flex; align-items:baseline; gap:9px; padding:3px 0;
+          font-size:13px; }
+.v-tag { flex:0 0 38px; font-size:11px; letter-spacing:.6px; color:var(--e-text2); }
+.v-line b { flex:1; font-weight:500; color:var(--e-text2); word-break:break-all; }
+.v-intent { color:var(--e-accent) !important; }
+.v-line b.bad { color:#ffc9c9; }
+.v-line b.ok  { color:#bdf0d6; }
+
+/* ---- 停止兜底：全宽红，误识别时人手第一优先 ---- */
+.v-stoprow { padding:10px 12px 6px; }
+.v-stop { width:100%; padding:17px 8px; font-size:19px; font-weight:700;
+          letter-spacing:8px; text-indent:8px; color:#fff; cursor:pointer;
+          border-radius:13px; border:1px solid rgba(255,107,107,.55);
+          background:linear-gradient(160deg,#e2524d 0%,#b8352f 100%);
+          box-shadow:0 12px 30px -12px rgba(255,107,107,.75);
+          transition:transform .12s, box-shadow .18s, filter .18s;
+          -webkit-tap-highlight-color:transparent; }
+.v-stop:hover { filter:brightness(1.07); }
+.v-stop:active { transform:scale(.97);
+                 box-shadow:0 6px 16px -10px rgba(255,107,107,.8); }
+
+/* ---- 最近指令历史 ---- */
+.v-history { flex:0 1 auto; min-height:70px; margin:6px 12px 10px;
+             padding:9px 13px; overflow:auto;
+             border:1px solid var(--e-line); border-radius:12px;
+             background:rgba(22,40,63,.35); }
+.v-history ul { margin:6px 0 0; padding:0; list-style:none; }
+.v-history li { display:flex; gap:8px; align-items:baseline;
+                padding:3.5px 0; font-size:12px; color:var(--e-text2);
+                border-top:1px dashed rgba(127,209,255,.08); }
+.v-history li:first-child { border-top:0; }
+.v-history li .t { flex:0 0 52px; color:#5b7590;
+                   font-variant-numeric:tabular-nums; }
+.v-history li .n { flex:0 0 auto; color:var(--e-accent); font-weight:500; }
+.v-history li .m { flex:1; word-break:break-all; }
+.v-history li .r-ok   { color:var(--e-ok); }
+.v-history li .r-bad  { color:var(--e-bad); }
+
+@media (max-width:420px){
+  .v-mic { width:96px; height:96px; }
+  .v-stop { letter-spacing:5px; text-indent:5px; font-size:17px; }
+}

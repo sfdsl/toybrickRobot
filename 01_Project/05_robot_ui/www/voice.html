@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>语音控制</title>
+<link rel="stylesheet" href="/common.css">
+<link rel="stylesheet" href="/sub.css">
+<link rel="stylesheet" href="/edit.css">
+<link rel="stylesheet" href="/voice.css">
+</head>
+<body class="has-subnav"><div id="wrap">
+  <header class="e-head">
+    <div>
+      <h1 class="e-h1">语音控制</h1>
+      <div class="e-sub">有限意图词表 · <b>停止兜底</b> · 三源一口</div>
+    </div>
+    <div class="e-conn" id="conn"><i class="e-dot"></i><span id="connTxt">连接中…</span></div>
+  </header>
+
+  <!-- 三路状态指示灯 + 模式 -->
+  <section class="e-bar v-lights">
+    <div class="e-group">
+      <span class="e-label">链路</span>
+      <span class="v-light" id="lgVoice"><i></i>识别</span>
+      <span class="v-light" id="lgMqtt"><i></i>云端</span>
+      <span class="v-light" id="lgSerial"><i></i>串口</span>
+    </div>
+    <div class="e-group">
+      <span class="e-label">控制权</span>
+      <span class="e-run" id="modeBadge">IDLE</span>
+    </div>
+  </section>
+
+  <!-- 麦克风主控区 -->
+  <section class="v-miczone">
+    <canvas id="wave"></canvas>
+    <button class="v-mic" id="btnMic" aria-label="开始语音">
+      <svg viewBox="0 0 24 24" width="34" height="34" fill="none"
+           stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="9" y="2.5" width="6" height="11" rx="3"></rect>
+        <path d="M5.5 11a6.5 6.5 0 0 0 13 0"></path>
+        <line x1="12" y1="17.5" x2="12" y2="21"></line>
+        <line x1="8.5" y1="21" x2="15.5" y2="21"></line>
+      </svg>
+    </button>
+    <div class="v-miclabel" id="micLabel">按下说话</div>
+    <div class="v-degrade" id="degrade" hidden></div>
+    <div class="e-toast" id="toast"></div>
+  </section>
+
+  <!-- 转写与意图反馈 -->
+  <section class="v-feedback">
+    <div class="v-line"><span class="v-tag">听到</span><b id="heard">—</b></div>
+    <div class="v-line"><span class="v-tag">意图</span><b id="intent" class="v-intent">—</b></div>
+    <div class="v-line"><span class="v-tag">结果</span><b id="result">—</b></div>
+    <div class="e-hint" id="vocab">词表：停止 / 前进 / 后退 / 左转 / 右转 / 回原点 / 去&lt;地点名&gt; / 开始巡逻 / 停止巡逻</div>
+  </section>
+
+  <!-- 停止兜底（误识别时人手可达，最高优先） -->
+  <div class="e-actions v-stoprow">
+    <button class="v-stop" id="btnStop">停 止</button>
+  </div>
+
+  <!-- 最近指令历史 -->
+  <section class="v-history">
+    <div class="e-label">最近指令</div>
+    <ul id="hist"></ul>
+  </section>
+
+  <nav class="s-nav">
+    <a href="/">遥控</a>
+    <a href="/nav.html">航点</a>
+    <a href="/patrol.html">巡逻</a>
+    <a href="/explore.html">探索</a>
+    <a href="/edit.html">编辑</a>
+    <a href="/voice.html" class="on">语音</a>
+    <a href="/hub.html">功能</a>
+  </nav>
+</div>
+<script src="/api.js"></script>
+<script src="/voice.js"></script></body></html>
